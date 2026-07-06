@@ -291,6 +291,12 @@ def parse_args() -> argparse.Namespace:
         help="Extract reference faces from this timestamp in the debate video.",
     )
     parser.add_argument("--fps", type=int, default=5)
+    parser.add_argument(
+        "--frame-size",
+        type=int,
+        default=256,
+        help="Output face crop resolution in pixels (square, e.g. 512 for higher quality).",
+    )
     parser.add_argument("--skip-rate", type=int, default=6)
     parser.add_argument(
         "--threshold",
@@ -339,6 +345,7 @@ def main() -> None:
         output_b,
         known_embeddings,
         fps=args.fps,
+        frame_size=(args.frame_size, args.frame_size),
         skip_rate=args.skip_rate,
         similarity_threshold=args.threshold,
         max_yaw_deg=args.max_yaw,
