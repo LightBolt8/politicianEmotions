@@ -103,6 +103,14 @@ def match_candidate(
     return None
 
 
+def is_frontal(face: insightface.app.common.Face, max_yaw_deg: float) -> bool:
+    """Return True if face yaw is within +/- max_yaw_deg of frontal."""
+    pose = getattr(face, "pose", None)
+    if pose is None:
+        return False
+    return abs(float(pose[0])) <= max_yaw_deg
+
+
 def crop_face_with_padding(
     frame: np.ndarray,
     bbox: np.ndarray,
@@ -130,7 +138,8 @@ def process_video(
     fps: int = 5,
     frame_size: tuple[int, int] = (256, 256),
     skip_rate: int = 6,
-    similarity_threshold: float = 0.4,
+    similarity_threshold: float = 0.5,
+    max_yaw_deg: float = 30.0,
     start_seconds: float = 0.0,
     max_seconds: float | None = None,
     progress_interval: int = 600,
@@ -179,6 +188,9 @@ def process_video(
                 continue
 
             for face in app.get(frame):
+                if not is_frontal(face, max_yaw_deg):
+                    continue
+
                 candidate_idx = match_candidate(
                     face.embedding, known_embeddings, similarity_threshold
                 )
@@ -283,8 +295,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.20,
+        default=0.5,
         help="Minimum cosine similarity to match a candidate (0-1, higher = stricter).",
+    )
+    parser.add_argument(
+        "--max-yaw",
+        type=float,
+        default=30.0,
+        help="Skip faces turned more than this many degrees left/right (yaw).",
     )
     return parser.parse_args()
 
@@ -323,6 +341,7 @@ def main() -> None:
         fps=args.fps,
         skip_rate=args.skip_rate,
         similarity_threshold=args.threshold,
+        max_yaw_deg=args.max_yaw,
         start_seconds=args.start_seconds,
         max_seconds=args.max_seconds,
     )
