@@ -1,0 +1,10 @@
+Input:/Users/bryanhan/politicianEmotions/Exported/Trump vs Clinton/candidate_A_clean.mp4
+Input full path:/Users/bryanhan/politicianEmotions/Exported/Trump vs Clinton/candidate_A_clean.mp4
+Camera parameters:233.333,233.333,128,128
+Output csv:candidate_A_clean.csv
+Gaze: 1
+AUs: 1
+Landmarks 2D: 1
+Landmarks 3D: 1
+Pose: 1
+Shape parameters: 0
