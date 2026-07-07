@@ -9,6 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 ANGER_AUS = ("AU04", "AU05", "AU07", "AU23")
 ANGER_LABELS = {
@@ -145,6 +146,39 @@ def plot_timeline(df: pd.DataFrame, summary: pd.DataFrame, output_path: Path, *,
     plt.close(fig)
 
 
+def build_au_correlation(df: pd.DataFrame, au_cols: list[str]) -> pd.DataFrame:
+    au_data = df[au_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    corr = au_data.corr()
+    corr.index = [col.replace("_r", "") for col in corr.index]
+    corr.columns = [col.replace("_r", "") for col in corr.columns]
+    order = sorted(corr.columns, key=lambda au: int(au[2:]))
+    return corr.loc[order, order]
+
+
+def plot_au_correlation(corr: pd.DataFrame, output_path: Path, *, title: str) -> None:
+    n = len(corr)
+    size = max(8.0, 0.45 * n + 3.0)
+    fig, ax = plt.subplots(figsize=(size, size), constrained_layout=True)
+    sns.heatmap(
+        corr,
+        ax=ax,
+        cmap="RdBu_r",
+        vmin=-1,
+        vmax=1,
+        center=0,
+        square=True,
+        linewidths=0.3,
+        linecolor="white",
+        cbar_kws={"label": "Pearson r", "shrink": 0.8},
+    )
+    ax.set_title(f"{title} — AU correlation matrix")
+    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="y", rotation=0)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def analyze_video(
     video_path: Path,
     *,
@@ -170,8 +204,11 @@ def analyze_video(
 
     plot_anger_and_other(summary, plots_dir / "anger_and_other.png", title=title)
     plot_timeline(df, summary, plots_dir / "timeline.png", title=title)
+    au_corr = build_au_correlation(df, au_cols)
+    plot_au_correlation(au_corr, plots_dir / "au_correlation.png", title=title)
     summary.to_csv(work_dir / "au_summary.csv", index=False)
     anger_summary.to_csv(work_dir / "anger_aus.csv", index=False)
+    au_corr.to_csv(work_dir / "au_correlation.csv")
 
     anger_idx = anger_summary["mean_intensity"].mean()
     print(f"[{year}/{candidate}] Frames: {len(df)} | Anger index: {anger_idx:.2f}")
