@@ -1,0 +1,11 @@
+Input:/Users/bryanhan/politicianEmotions/Exported/Trump vs Biden1/Trump_clean_2020.mp4
+Input full path:/Users/bryanhan/politicianEmotions/Exported/Trump vs Biden1/Trump_clean_2020.mp4
+Camera parameters:233.333,233.333,128,128
+Output video:Trump_clean_2020.avi
+Output csv:Trump_clean_2020.csv
+Gaze: 1
+AUs: 1
+Landmarks 2D: 1
+Landmarks 3D: 1
+Pose: 1
+Shape parameters: 0

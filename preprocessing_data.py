@@ -138,7 +138,7 @@ def process_video(
     fps: int = 5,
     frame_size: tuple[int, int] = (256, 256),
     skip_rate: int = 6,
-    similarity_threshold: float = 0.5,
+    similarity_threshold: float = 0.7,
     max_yaw_deg: float = 30.0,
     start_seconds: float = 0.0,
     max_seconds: float | None = None,
@@ -223,13 +223,15 @@ def resolve_output_paths(
     output_a: Path | None,
     output_b: Path | None,
 ) -> tuple[Path, Path]:
-    """Place exports in output_dir/<video name>/ unless paths are given explicitly."""
+    """Place exports in output_dir/<debate>/<candidate>/ unless paths are given explicitly."""
     run_dir = output_dir / input_video.stem
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return (
-        output_a or run_dir / "candidate_A_clean.mp4",
-        output_b or run_dir / "candidate_B_clean.mp4",
-    )
+    path_a = output_a or run_dir / "candidate_A_clean" / "candidate_A_clean.mp4"
+    path_b = output_b or run_dir / "candidate_B_clean" / "candidate_B_clean.mp4"
+    if not output_a:
+        path_a.parent.mkdir(parents=True, exist_ok=True)
+    if not output_b:
+        path_b.parent.mkdir(parents=True, exist_ok=True)
+    return path_a, path_b
 
 
 def parse_args() -> argparse.Namespace:
@@ -264,13 +266,13 @@ def parse_args() -> argparse.Namespace:
         "--output-a",
         type=Path,
         default=None,
-        help="Output video for candidate A (default: Exported/<video>/candidate_A_clean.mp4).",
+        help="Output video for candidate A (default: Exported/<debate>/candidate_A_clean/candidate_A_clean.mp4).",
     )
     parser.add_argument(
         "--output-b",
         type=Path,
         default=None,
-        help="Output video for candidate B (default: Exported/<video>/candidate_B_clean.mp4).",
+        help="Output video for candidate B (default: Exported/<debate>/candidate_B_clean/candidate_B_clean.mp4).",
     )
     parser.add_argument(
         "--start-seconds",
@@ -301,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.5,
+        default=0.7,
         help="Minimum cosine similarity to match a candidate (0-1, higher = stricter).",
     )
     parser.add_argument(

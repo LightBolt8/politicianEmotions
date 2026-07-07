@@ -1,0 +1,11 @@
+Input:/Users/bryanhan/politicianEmotions/Exported/Trump vs Harris/Harris_clean_2024/Harris_clean_2024.mp4
+Input full path:/Users/bryanhan/politicianEmotions/Exported/Trump vs Harris/Harris_clean_2024/Harris_clean_2024.mp4
+Camera parameters:233.333,233.333,128,128
+Output video:Harris_clean_2024.avi
+Output csv:Harris_clean_2024.csv
+Gaze: 0
+AUs: 1
+Landmarks 2D: 1
+Landmarks 3D: 0
+Pose: 1
+Shape parameters: 0

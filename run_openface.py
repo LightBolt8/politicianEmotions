@@ -9,11 +9,17 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_EXPORTED_DIR = Path("Exported")
-DEFAULT_OUTPUT_DIR = Path("OpenFaceResults")
+DEFAULT_DATA_DIR = Path("Exported")
 
-# CSV + features only; skip tracked video / aligned images to save disk space.
-OPENFACE_FEATURE_FLAGS = ("-2Dfp", "-3Dfp", "-pose", "-aus", "-gaze")
+# CSV + features by default; add -tracked to also write a landmark overlay video.
+OPENFACE_FEATURE_FLAGS = ("-2Dfp", "-pose", "-aus")
+
+
+def openface_flags(*, tracked: bool = False) -> tuple[str, ...]:
+    flags = list(OPENFACE_FEATURE_FLAGS)
+    if tracked:
+        flags.append("-tracked")
+    return tuple(flags)
 
 
 def find_feature_extraction(explicit: Path | None) -> Path:
@@ -43,7 +49,7 @@ def find_feature_extraction(explicit: Path | None) -> Path:
     )
 
 
-def discover_videos(exported_dir: Path, videos: list[Path] | None) -> list[Path]:
+def discover_videos(data_dir: Path, videos: list[Path] | None) -> list[Path]:
     """Return processed MP4 files to analyze."""
     if videos:
         found = [path.expanduser().resolve() for path in videos]
@@ -52,28 +58,42 @@ def discover_videos(exported_dir: Path, videos: list[Path] | None) -> list[Path]
             raise FileNotFoundError(f"Video not found: {missing[0]}")
         return found
 
-    if not exported_dir.is_dir():
-        raise FileNotFoundError(f"Exported directory not found: {exported_dir}")
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    found = sorted(exported_dir.rglob("*.mp4"))
+    found = sorted(data_dir.rglob("*.mp4"))
     if not found:
-        raise FileNotFoundError(f"No .mp4 files found under {exported_dir}")
+        raise FileNotFoundError(f"No .mp4 files found under {data_dir}")
     return found
 
 
-def output_dir_for_video(
-    video_path: Path, exported_dir: Path, output_root: Path
-) -> Path:
-    """Mirror Exported/<debate>/ under OpenFaceResults/<debate>/."""
-    try:
-        relative_parent = video_path.parent.relative_to(exported_dir.resolve())
-    except ValueError:
-        relative_parent = Path(video_path.parent.name)
-    return output_root / relative_parent / video_path.stem
+def output_dir_for_video(video_path: Path) -> Path:
+    """Write OpenFace outputs next to the source video."""
+    return video_path.parent
 
 
 def csv_already_exists(out_dir: Path, video_path: Path) -> bool:
     return (out_dir / f"{video_path.stem}.csv").is_file()
+
+
+def tracked_video_exists(out_dir: Path, video_path: Path) -> bool:
+    return (out_dir / f"{video_path.stem}.avi").is_file()
+
+
+def should_skip_video(
+    out_dir: Path,
+    video_path: Path,
+    *,
+    force: bool,
+    tracked: bool,
+) -> bool:
+    if force:
+        return False
+    if not csv_already_exists(out_dir, video_path):
+        return False
+    if tracked and not tracked_video_exists(out_dir, video_path):
+        return False
+    return True
 
 
 def run_openface_on_video(
@@ -82,6 +102,7 @@ def run_openface_on_video(
     out_dir: Path,
     *,
     openface_cwd: Path | None,
+    tracked: bool = False,
 ) -> None:
     """Run FeatureExtraction for a single preprocessed face video."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -91,9 +112,11 @@ def run_openface_on_video(
         str(video_path),
         "-out_dir",
         str(out_dir),
-        *OPENFACE_FEATURE_FLAGS,
+        *openface_flags(tracked=tracked),
     ]
     print(f"Running OpenFace on {video_path.name} -> {out_dir}")
+    if tracked:
+        print(f"  Tracked video will be written to {out_dir / (video_path.stem + '.avi')}")
     subprocess.run(
         command,
         check=True,
@@ -109,16 +132,16 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--exported-dir",
+        "--data-dir",
         type=Path,
-        default=DEFAULT_EXPORTED_DIR,
+        default=DEFAULT_DATA_DIR,
         help="Directory containing preprocessed videos (default: Exported).",
     )
     parser.add_argument(
-        "--output-dir",
+        "--exported-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help="Directory for OpenFace CSV output (default: OpenFaceResults).",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--openface-bin",
@@ -143,6 +166,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-run even if the CSV output already exists.",
     )
+    parser.add_argument(
+        "--tracked",
+        action="store_true",
+        help="Also export a tracked .avi with landmarks and AU overlay.",
+    )
     return parser.parse_args()
 
 
@@ -165,18 +193,17 @@ def resolve_binary(args: argparse.Namespace) -> tuple[Path, Path | None]:
 def main() -> None:
     args = parse_args()
     binary, openface_cwd = resolve_binary(args)
-    exported_dir = args.exported_dir.expanduser().resolve()
-    output_root = args.output_dir.expanduser().resolve()
-    videos = discover_videos(exported_dir, args.videos or None)
+    data_dir = (args.exported_dir or args.data_dir).expanduser().resolve()
+    videos = discover_videos(data_dir, args.videos or None)
 
     print(f"Using OpenFace binary: {binary}")
     print(f"Found {len(videos)} video(s) to process")
 
     failures: list[str] = []
     for video_path in videos:
-        out_dir = output_dir_for_video(video_path, exported_dir, output_root)
-        if not args.force and csv_already_exists(out_dir, video_path):
-            print(f"Skipping {video_path.name} (CSV already exists)")
+        out_dir = output_dir_for_video(video_path)
+        if should_skip_video(out_dir, video_path, force=args.force, tracked=args.tracked):
+            print(f"Skipping {video_path.name} (outputs already exist)")
             continue
         try:
             run_openface_on_video(
@@ -184,6 +211,7 @@ def main() -> None:
                 video_path,
                 out_dir,
                 openface_cwd=openface_cwd,
+                tracked=args.tracked,
             )
         except subprocess.CalledProcessError as exc:
             failures.append(f"{video_path.name} (exit code {exc.returncode})")

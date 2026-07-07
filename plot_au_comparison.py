@@ -18,7 +18,6 @@ ANGER_LABELS = {
     "AU07": "Lid tightener",
     "AU23": "Lip tightener",
 }
-# High cross-candidate variance beyond anger AUs
 EXTRA_AUS = ("AU12", "AU14", "AU17", "AU26")
 EXTRA_LABELS = {
     "AU12": "Lip corner puller",
@@ -27,12 +26,60 @@ EXTRA_LABELS = {
     "AU26": "Jaw drop",
 }
 
-CANDIDATES: list[tuple[str, Path]] = [
-    ("Trump 2016", Path("analysis/2016/Trump/openface/Trump_clean_2016.csv")),
-    ("Clinton 2016", Path("analysis/2016/Clinton/openface/Clinton_clean_2016.csv")),
-    ("Trump 2024", Path("analysis/2024/Trump/openface/Trump_clean_2024_noads.csv")),
-    ("Harris 2024", Path("analysis/2024/Harris/openface/Harris_clean_2024_noads.csv")),
+# Default comparison: 2016 + 2024 debates (matches original plots).
+DEFAULT_CANDIDATES: list[tuple[str, str]] = [
+    ("Trump 2016", "Trump vs Clinton/Trump_clean_2016/Trump_clean_2016.csv"),
+    ("Clinton 2016", "Trump vs Clinton/Clinton_clean_2016/Clinton_clean_2016.csv"),
+    ("Trump 2024", "Trump vs Harris/Trump_clean_2024/Trump_clean_2024.csv"),
+    ("Harris 2024", "Trump vs Harris/Harris_clean_2024/Harris_clean_2024.csv"),
 ]
+
+PALETTE = {
+    "Trump 2016": "#dc2626",
+    "Clinton 2016": "#2563eb",
+    "Trump 2024": "#f97316",
+    "Harris 2024": "#7c3aed",
+    "Biden 2020": "#16a34a",
+    "Trump 2020": "#ea580c",
+}
+
+
+def csv_path_for(data_root: Path, relative: str) -> Path:
+    return data_root / relative
+
+
+def discover_all_candidates(data_root: Path) -> list[tuple[str, Path]]:
+    found: list[tuple[str, Path, tuple[int, str]]] = []
+    for csv_path in sorted(data_root.rglob("*_clean_*.csv")):
+        stem = csv_path.stem
+        if "_clean_" not in stem or csv_path.parent.name != stem:
+            continue
+        candidate, year = stem.rsplit("_clean_", 1)
+        label = f"{candidate} {year}"
+        found.append((label, csv_path, (int(year), candidate)))
+
+    best: dict[str, tuple[Path, tuple[int, str]]] = {}
+    for label, path, sort_key in found:
+        if label not in best or path.stat().st_size > best[label][0].stat().st_size:
+            best[label] = (path, sort_key)
+
+    return [
+        (label, path)
+        for label, (path, _) in sorted(best.items(), key=lambda x: x[1][1])
+    ]
+
+
+def resolve_candidates(data_root: Path, *, include_all: bool) -> list[tuple[str, Path]]:
+    if include_all:
+        return discover_all_candidates(data_root)
+
+    candidates: list[tuple[str, Path]] = []
+    for label, relative in DEFAULT_CANDIDATES:
+        path = csv_path_for(data_root, relative)
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing OpenFace CSV: {path}")
+        candidates.append((label, path))
+    return candidates
 
 
 def load_au_frame_data(csv_path: Path) -> pd.DataFrame:
@@ -47,9 +94,7 @@ def load_au_frame_data(csv_path: Path) -> pd.DataFrame:
 
 
 def build_mean_matrix(frame_data: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    rows = {}
-    for label, df in frame_data.items():
-        rows[label] = df.mean()
+    rows = {label: df.mean() for label, df in frame_data.items()}
     matrix = pd.DataFrame(rows).T
     matrix.columns = [col.replace("_r", "") for col in matrix.columns]
     au_order = sorted(matrix.columns, key=lambda x: int(x[2:]))
@@ -109,14 +154,13 @@ def au_panel_label(au: str) -> str:
     return au
 
 
-def plot_violins(long_df: pd.DataFrame, aus: tuple[str, ...], output_path: Path) -> None:
-    candidate_order = [label for label, _ in CANDIDATES]
-    palette = {
-        "Trump 2016": "#dc2626",
-        "Clinton 2016": "#2563eb",
-        "Trump 2024": "#f97316",
-        "Harris 2024": "#7c3aed",
-    }
+def plot_violins(
+    long_df: pd.DataFrame,
+    aus: tuple[str, ...],
+    candidate_order: list[str],
+    output_path: Path,
+) -> None:
+    palette = {name: PALETTE[name] for name in candidate_order if name in PALETTE}
 
     ncols = 4
     nrows = int(np.ceil(len(aus) / ncols))
@@ -153,25 +197,37 @@ def plot_violins(long_df: pd.DataFrame, aus: tuple[str, ...], output_path: Path)
     plt.close(fig)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot cross-candidate AU comparisons.")
+    parser.add_argument("--data-dir", type=Path, default=Path("Exported"))
     parser.add_argument(
-        "--output-dir",
+        "--openface-dir",
         type=Path,
-        default=Path("analysis/comparison"),
+        default=None,
+        help=argparse.SUPPRESS,
     )
-    return parser.parse_args()
+    parser.add_argument("--output-dir", type=Path, default=Path("analysis/comparison"))
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include all candidates under Exported/ (default: 2016 + 2024 only).",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
-    output_dir = args.output_dir.expanduser().resolve()
+def run_comparison(
+    data_root: Path | None = None,
+    output_dir: Path | None = None,
+    *,
+    include_all: bool = False,
+) -> None:
+    data_root = (data_root or Path("Exported")).expanduser().resolve()
+    output_dir = (output_dir or Path("analysis/comparison")).expanduser().resolve()
 
-    frame_data: dict[str, pd.DataFrame] = {}
-    for label, path in CANDIDATES:
-        if not path.is_file():
-            raise FileNotFoundError(f"Missing OpenFace CSV: {path}")
-        frame_data[label] = load_au_frame_data(path)
+    candidates = resolve_candidates(data_root, include_all=include_all)
+    frame_data = {label: load_au_frame_data(path) for label, path in candidates}
+    for label, path in candidates:
+        print(f"Loaded {label}: {path.name} ({len(frame_data[label])} frames)")
 
     mean_matrix = build_mean_matrix(frame_data)
     plot_heatmap(mean_matrix, output_dir / "au_heatmap.png")
@@ -179,10 +235,17 @@ def main() -> None:
 
     violin_aus = ANGER_AUS + EXTRA_AUS
     long_df = build_violin_long_frame(frame_data, violin_aus)
-    plot_violins(long_df, violin_aus, output_dir / "au_violins.png")
+    candidate_order = [label for label, _ in candidates]
+    plot_violins(long_df, violin_aus, candidate_order, output_dir / "au_violins.png")
 
     print(f"Wrote {output_dir / 'au_heatmap.png'}")
     print(f"Wrote {output_dir / 'au_violins.png'}")
+
+
+def main() -> None:
+    args = parse_args()
+    data_dir = args.openface_dir or args.data_dir
+    run_comparison(data_dir, args.output_dir, include_all=args.all)
 
 
 if __name__ == "__main__":
