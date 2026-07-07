@@ -4,15 +4,34 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 
 DEFAULT_DATA_DIR = Path("Exported")
 
-# CSV + features by default; add -tracked to also write a landmark overlay video.
-OPENFACE_FEATURE_FLAGS = ("-2Dfp", "-pose", "-aus")
+# Minimal OpenFace output: pose + AUs + gaze (no 2D/3D landmark columns).
+OPENFACE_FEATURE_FLAGS = ("-pose", "-aus", "-gaze")
+
+CORE_CSV_COLUMNS: tuple[str, ...] = (
+    "frame",
+    "face_id",
+    "timestamp",
+    "confidence",
+    "success",
+    "gaze_angle_x",
+    "gaze_angle_y",
+    "pose_Tx",
+    "pose_Ty",
+    "pose_Tz",
+    "pose_Rx",
+    "pose_Ry",
+    "pose_Rz",
+)
 
 
 def openface_flags(*, tracked: bool = False) -> tuple[str, ...]:
@@ -20,6 +39,48 @@ def openface_flags(*, tracked: bool = False) -> tuple[str, ...]:
     if tracked:
         flags.append("-tracked")
     return tuple(flags)
+
+
+def au_columns(columns: list[str]) -> list[str]:
+    return sorted(
+        [col for col in columns if re.fullmatch(r"AU\d{2}_[rc]", col)],
+        key=lambda col: (int(col[2:4]), col[-1]),
+    )
+
+
+def slim_csv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [col.strip() for col in df.columns]
+    keep = [col for col in CORE_CSV_COLUMNS if col in df.columns]
+    keep.extend(au_columns(list(df.columns)))
+    if not keep:
+        raise ValueError("No recognized OpenFace columns found")
+    return df[keep]
+
+
+def slim_openface_csv(csv_path: Path) -> tuple[int, int]:
+    """Rewrite an OpenFace CSV keeping only core metadata, gaze, pose, and AUs."""
+    before_cols = len(pd.read_csv(csv_path, nrows=0).columns)
+    df = pd.read_csv(csv_path)
+    slim = slim_csv_columns(df)
+    slim.to_csv(csv_path, index=False)
+    return before_cols, len(slim.columns)
+
+
+def discover_openface_csvs(data_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in data_dir.rglob("*_clean_*.csv")
+        if path.parent.name == path.stem and path.is_file()
+    )
+
+
+def slim_all_csvs(data_dir: Path) -> None:
+    csv_paths = discover_openface_csvs(data_dir)
+    if not csv_paths:
+        raise FileNotFoundError(f"No OpenFace CSVs found under {data_dir}")
+    for csv_path in csv_paths:
+        before, after = slim_openface_csv(csv_path)
+        print(f"Slimmed {csv_path.name}: {before} -> {after} columns")
 
 
 def find_feature_extraction(explicit: Path | None) -> Path:
@@ -122,6 +183,10 @@ def run_openface_on_video(
         check=True,
         cwd=openface_cwd,
     )
+    csv_path = out_dir / f"{video_path.stem}.csv"
+    if csv_path.is_file():
+        before, after = slim_openface_csv(csv_path)
+        print(f"  Slimmed CSV: {before} -> {after} columns")
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,6 +236,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also export a tracked .avi with landmarks and AU overlay.",
     )
+    parser.add_argument(
+        "--slim-csvs",
+        action="store_true",
+        help="Trim existing OpenFace CSVs under --data-dir (no FeatureExtraction run).",
+    )
     return parser.parse_args()
 
 
@@ -192,8 +262,13 @@ def resolve_binary(args: argparse.Namespace) -> tuple[Path, Path | None]:
 
 def main() -> None:
     args = parse_args()
-    binary, openface_cwd = resolve_binary(args)
     data_dir = (args.exported_dir or args.data_dir).expanduser().resolve()
+
+    if args.slim_csvs:
+        slim_all_csvs(data_dir)
+        return
+
+    binary, openface_cwd = resolve_binary(args)
     videos = discover_videos(data_dir, args.videos or None)
 
     print(f"Using OpenFace binary: {binary}")

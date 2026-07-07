@@ -206,7 +206,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("analysis/comparison"))
+    parser.add_argument("--output-dir", type=Path, default=Path("Exported/comparison"))
     parser.add_argument(
         "--all",
         action="store_true",
@@ -222,7 +222,7 @@ def run_comparison(
     include_all: bool = False,
 ) -> None:
     data_root = (data_root or Path("Exported")).expanduser().resolve()
-    output_dir = (output_dir or Path("analysis/comparison")).expanduser().resolve()
+    output_dir = (output_dir or Path("Exported/comparison")).expanduser().resolve()
 
     candidates = resolve_candidates(data_root, include_all=include_all)
     frame_data = {label: load_au_frame_data(path) for label, path in candidates}

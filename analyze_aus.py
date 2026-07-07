@@ -21,7 +21,6 @@ ANGER_COLOR = "#dc2626"
 OTHER_COLOR = "#2563eb"
 
 DEFAULT_DATA_DIR = Path("Exported")
-DEFAULT_OUTPUT_ROOT = Path("analysis")
 
 
 def openface_csv_for_video(video_path: Path) -> Path:
@@ -149,7 +148,6 @@ def plot_timeline(df: pd.DataFrame, summary: pd.DataFrame, output_path: Path, *,
 def analyze_video(
     video_path: Path,
     *,
-    output_root: Path,
     openface_bin: Path | None,
     run_openface: bool,
 ) -> Path:
@@ -162,7 +160,7 @@ def analyze_video(
             f"OpenFace CSV not found: {csv_path}. Run run_openface.py first or pass --run-openface."
         )
 
-    work_dir = output_root / year / candidate
+    work_dir = video_path.parent
     plots_dir = work_dir / "plots"
     title = f"{candidate} ({year})"
 
@@ -193,7 +191,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument(
         "--run-openface",
         action="store_true",
@@ -215,7 +212,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     data_dir = (args.exported_dir or args.data_dir).expanduser().resolve()
-    output_root = args.output_root.expanduser().resolve()
 
     if args.all:
         videos = discover_exports(data_dir)
@@ -226,7 +222,6 @@ def main() -> None:
             try:
                 analyze_video(
                     video,
-                    output_root=output_root,
                     openface_bin=args.openface_bin,
                     run_openface=args.run_openface,
                 )
@@ -238,7 +233,7 @@ def main() -> None:
                 print(f"  {msg}")
         from plot_au_comparison import run_comparison
 
-        run_comparison(data_dir, output_root / "comparison")
+        run_comparison(data_dir, data_dir / "comparison")
         return
 
     if not args.source:
@@ -247,14 +242,13 @@ def main() -> None:
     video = args.source.expanduser().resolve()
     analyze_video(
         video,
-        output_root=output_root,
         openface_bin=args.openface_bin,
         run_openface=args.run_openface,
     )
     if args.comparison:
         from plot_au_comparison import run_comparison
 
-        run_comparison(data_dir, output_root / "comparison")
+        run_comparison(data_dir, data_dir / "comparison")
 
 
 if __name__ == "__main__":
