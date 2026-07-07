@@ -185,6 +185,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-seconds", type=float, default=0.0)
     parser.add_argument("--duration-seconds", type=float, default=300.0)
     parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Analyze the entire source video (skip clip extraction).",
+    )
+    parser.add_argument(
+        "--openface-csv",
+        type=Path,
+        default=None,
+        help="Reuse an existing OpenFace CSV instead of rerunning FeatureExtraction.",
+    )
+    parser.add_argument(
         "--openface-bin",
         type=Path,
         default=Path.home() / "OpenFace/build/bin/FeatureExtraction",
@@ -197,24 +208,34 @@ def main() -> None:
     args = parse_args()
     work_dir = args.output_root.expanduser() / args.year / args.candidate
     work_dir.mkdir(parents=True, exist_ok=True)
-    clip_path = work_dir / "clip.mp4"
     openface_dir = work_dir / "openface"
     plots_dir = work_dir / "plots"
-    title = f"{args.candidate} ({args.year})"
+    source = args.source.expanduser().resolve()
+    scope = "full debate" if args.full else f"first {args.duration_seconds:.0f}s"
+    title = f"{args.candidate} ({args.year}, {scope})"
 
     if not args.openface_bin.is_file():
         raise FileNotFoundError(f"OpenFace binary not found: {args.openface_bin}")
 
-    print(f"[{args.year}/{args.candidate}] Extracting {args.duration_seconds}s clip...")
-    extract_clip(
-        args.source.expanduser().resolve(),
-        clip_path,
-        start_seconds=args.start_seconds,
-        duration_seconds=args.duration_seconds,
-    )
-
-    print(f"[{args.year}/{args.candidate}] Running OpenFace...")
-    csv_path = run_openface(args.openface_bin.resolve(), clip_path, openface_dir)
+    if args.openface_csv:
+        csv_path = args.openface_csv.expanduser().resolve()
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"OpenFace CSV not found: {csv_path}")
+        print(f"[{args.year}/{args.candidate}] Using existing OpenFace CSV: {csv_path.name}")
+    elif args.full:
+        print(f"[{args.year}/{args.candidate}] Running OpenFace on full video...")
+        csv_path = run_openface(args.openface_bin.resolve(), source, openface_dir)
+    else:
+        clip_path = work_dir / "clip.mp4"
+        print(f"[{args.year}/{args.candidate}] Extracting {args.duration_seconds}s clip...")
+        extract_clip(
+            source,
+            clip_path,
+            start_seconds=args.start_seconds,
+            duration_seconds=args.duration_seconds,
+        )
+        print(f"[{args.year}/{args.candidate}] Running OpenFace...")
+        csv_path = run_openface(args.openface_bin.resolve(), clip_path, openface_dir)
 
     df, au_cols = load_au_data(csv_path)
     summary = build_summary(df, au_cols)
