@@ -170,6 +170,10 @@ def process_video(
     written_a = 0
     written_b = 0
 
+    not_frontal = 0
+    no_match = 0
+    crop_failed = 0
+
     try:
         while True:
             ret, frame = capture.read()
@@ -189,16 +193,19 @@ def process_video(
 
             for face in app.get(frame):
                 if not is_frontal(face, max_yaw_deg):
+                    not_frontal += 1
                     continue
 
                 candidate_idx = match_candidate(
                     face.embedding, known_embeddings, similarity_threshold
                 )
                 if candidate_idx is None:
+                    no_match += 1
                     continue
 
                 cropped_face = crop_face_with_padding(frame, face.bbox)
                 if cropped_face is None:
+                    crop_failed += 1
                     continue
 
                 resized_face = cv2.resize(cropped_face, frame_size)
@@ -213,6 +220,15 @@ def process_video(
         capture.release()
         writer_a.release()
         writer_b.release()
+
+    print(
+        f"\nProcessing summary for {input_video_path.name}:"
+        f"\n  Candidate A faces written : {written_a}"
+        f"\n  Candidate B faces written : {written_b}"
+        f"\n  Non-frontal faces skipped : {not_frontal}"
+        f"\n  Unmatched faces skipped   : {no_match}"
+        f"\n  Crop failures             : {crop_failed}"
+    )
 
     return written_a, written_b
 
