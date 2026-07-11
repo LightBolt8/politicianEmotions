@@ -298,7 +298,7 @@ def process_video(
     fps: int = 5,
     frame_size: tuple[int, int] = (256, 256),
     skip_rate: int = 6,
-    similarity_threshold: float = 0.7,
+    similarity_threshold: float = 0.6,
     max_yaw_deg: float = 30.0,
     start_seconds: float = 0.0,
     max_seconds: float | None = None,
@@ -417,6 +417,10 @@ def process_video(
         writer_deleted = open_video_writer(
             part_path(deleted_path, part_index), fps, frame_size
         )
+
+    not_frontal = 0
+    no_match = 0
+    crop_failed = 0
 
     try:
         while True:
@@ -605,7 +609,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.7,
+        default=0.6,
         help="Minimum cosine similarity to match a candidate (0-1, higher = stricter).",
     )
     parser.add_argument(
