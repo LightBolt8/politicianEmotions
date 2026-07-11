@@ -26,12 +26,12 @@ EXTRA_LABELS = {
     "AU26": "Jaw drop",
 }
 
-# Default comparison: 2016 + 2024 debates (matches original plots).
+# Default comparison: 2016 + 2024 debates under Exported/<year>/.
 DEFAULT_CANDIDATES: list[tuple[str, str]] = [
-    ("Trump 2016", "Trump vs Clinton/Trump_clean_2016/Trump_clean_2016.csv"),
-    ("Clinton 2016", "Trump vs Clinton/Clinton_clean_2016/Clinton_clean_2016.csv"),
-    ("Trump 2024", "Trump vs Harris/Trump_clean_2024/Trump_clean_2024.csv"),
-    ("Harris 2024", "Trump vs Harris/Harris_clean_2024/Harris_clean_2024.csv"),
+    ("Trump 2016", "2016/Trump_clean_2016/Trump_clean_2016.csv"),
+    ("Clinton 2016", "2016/Clinton_clean_2016/Clinton_clean_2016.csv"),
+    ("Trump 2024", "2024k/Trump_clean_2024/Trump_clean_2024.csv"),
+    ("Harris 2024", "2024k/Harris_clean_2024/Harris_clean_2024.csv"),
 ]
 
 PALETTE = {
@@ -74,11 +74,21 @@ def resolve_candidates(data_root: Path, *, include_all: bool) -> list[tuple[str,
         return discover_all_candidates(data_root)
 
     candidates: list[tuple[str, Path]] = []
+    missing: list[str] = []
     for label, relative in DEFAULT_CANDIDATES:
         path = csv_path_for(data_root, relative)
         if not path.is_file():
-            raise FileNotFoundError(f"Missing OpenFace CSV: {path}")
+            missing.append(f"{label} ({path})")
+            continue
         candidates.append((label, path))
+    if not candidates:
+        raise FileNotFoundError(
+            "No comparison CSVs found. Missing:\n  " + "\n  ".join(missing)
+        )
+    if missing:
+        print("Skipping missing candidates:")
+        for msg in missing:
+            print(f"  {msg}")
     return candidates
 
 

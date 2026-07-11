@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2016.mp4",
+  "output_a": "Exported/2016/Trump_clean_2016/Trump_clean_2016.mp4",
+  "output_b": "Exported/2016/Clinton_clean_2016/Clinton_clean_2016.mp4",
+  "deleted": "Exported/2016/deleted_faces.mp4",
+  "last_frame": 184676,
+  "written_a": 13626,
+  "written_b": 23009,
+  "written_deleted": 38168,
+  "part_index": 19,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}

@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import json
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import cv2
 import insightface
 import numpy as np
 from insightface.app import FaceAnalysis
+
+# Set by SIGINT/SIGTERM so the main loop can finalize writers cleanly.
+_stop_requested = False
+
+
+def _request_stop(signum: int, _frame: object) -> None:
+    global _stop_requested
+    _stop_requested = True
+    print(f"\nReceived signal {signum}; finishing current frame and finalizing outputs...")
 
 
 def create_face_app() -> FaceAnalysis:
@@ -43,51 +56,6 @@ def build_known_embeddings(
         load_reference_embedding(app, candidate_a_path),
         load_reference_embedding(app, candidate_b_path),
     ]
-
-
-def calibrate_from_video(
-    app: FaceAnalysis,
-    video_path: Path,
-    photo_embeddings: list[np.ndarray],
-    calibrate_seconds: float,
-) -> list[np.ndarray]:
-    """
-    Build reference embeddings from a split-screen debate frame so both
-    candidates score ~0.80+ against their own footage.
-    """
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise ValueError(f"Could not open video: {video_path}")
-
-    for offset in (0, 30, 60, 120, -60, -120):
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0, (calibrate_seconds + offset) * 1000))
-        ret, frame = capture.read()
-        if not ret:
-            continue
-
-        faces = app.get(frame)
-        if len(faces) < 2:
-            continue
-
-        debate_embeddings: list[np.ndarray | None] = [None, None]
-        for face in faces:
-            photo_sims = [
-                cosine_similarity(face.embedding, photo) for photo in photo_embeddings
-            ]
-            candidate_idx = int(np.argmax(photo_sims))
-            if debate_embeddings[candidate_idx] is None:
-                debate_embeddings[candidate_idx] = face.embedding
-
-        if all(embedding is not None for embedding in debate_embeddings):
-            capture.release()
-            print(f"Calibrated references from {calibrate_seconds + offset:.0f}s in video")
-            return debate_embeddings  # type: ignore[return-value]
-
-    capture.release()
-    raise RuntimeError(
-        "Could not calibrate from video: no split-screen frame with two faces found. "
-        "Try a different --calibrate-seconds value."
-    )
 
 
 def match_candidate(
@@ -128,11 +96,203 @@ def crop_face_with_padding(
     return cropped
 
 
+def open_video_writer(path: Path, fps: float, frame_size: tuple[int, int]) -> cv2.VideoWriter:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+    writer = cv2.VideoWriter(str(path), fourcc, fps, frame_size)
+    if not writer.isOpened():
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(path), fourcc, fps, frame_size)
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not open VideoWriter for {path}")
+    return writer
+
+
+def part_path(final_path: Path, part_index: int) -> Path:
+    return final_path.with_name(f"{final_path.stem}.part{part_index:03d}{final_path.suffix}")
+
+
+def checkpoint_path_for(deleted_path: Path) -> Path:
+    return deleted_path.parent / "preprocess_checkpoint.json"
+
+
+def is_playable_video(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    capture = cv2.VideoCapture(str(path))
+    ok = capture.isOpened() and capture.get(cv2.CAP_PROP_FRAME_COUNT) > 0
+    if ok:
+        ret, _ = capture.read()
+        ok = bool(ret)
+    capture.release()
+    return ok
+
+
+def list_part_files(final_path: Path) -> list[Path]:
+    pattern = f"{final_path.stem}.part*{final_path.suffix}"
+    return sorted(final_path.parent.glob(pattern))
+
+
+def concat_parts(final_path: Path, fps: float, frame_size: tuple[int, int]) -> int:
+    """Concatenate finalized part files into final_path. Returns total frames written."""
+    parts = [p for p in list_part_files(final_path) if is_playable_video(p)]
+    if not parts:
+        return 0
+
+    if len(parts) == 1:
+        parts[0].replace(final_path)
+        return int(cv2.VideoCapture(str(final_path)).get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+    list_file = final_path.with_suffix(".concat.txt")
+    list_file.write_text(
+        "".join(f"file '{p.resolve()}'\n" for p in parts),
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(list_file),
+                "-c",
+                "copy",
+                str(final_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and is_playable_video(final_path):
+            for part in parts:
+                part.unlink(missing_ok=True)
+            return int(cv2.VideoCapture(str(final_path)).get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        list_file.unlink(missing_ok=True)
+
+    # Fallback: re-encode with OpenCV if ffmpeg copy fails.
+    writer = open_video_writer(final_path, fps, frame_size)
+    total = 0
+    try:
+        for part in parts:
+            capture = cv2.VideoCapture(str(part))
+            while True:
+                ret, frame = capture.read()
+                if not ret:
+                    break
+                if frame.shape[1] != frame_size[0] or frame.shape[0] != frame_size[1]:
+                    frame = cv2.resize(frame, frame_size)
+                writer.write(frame)
+                total += 1
+            capture.release()
+    finally:
+        writer.release()
+
+    for part in parts:
+        part.unlink(missing_ok=True)
+    return total
+
+
+def save_checkpoint(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_checkpoint(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find_first_appearances(
+    app: FaceAnalysis,
+    video_path: Path,
+    photo_embeddings: list[np.ndarray],
+    ref_paths: list[Path],
+    *,
+    similarity_threshold: float,
+    max_yaw_deg: float,
+    skip_rate: int = 6,
+    search_start_seconds: float = 0.0,
+) -> list[np.ndarray]:
+    """
+    Find the first frontal matched frame for each candidate, overwrite ref images
+    with those crops, and return debate-frame embeddings for matching.
+    """
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+
+    source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
+    if search_start_seconds > 0:
+        capture.set(cv2.CAP_PROP_POS_MSEC, search_start_seconds * 1000)
+
+    found: list[np.ndarray | None] = [None, None]
+    first_crops: list[np.ndarray | None] = [None, None]
+    first_times: list[float | None] = [None, None]
+    frame_count = int(search_start_seconds * source_fps)
+
+    try:
+        while any(emb is None for emb in found):
+            ret, frame = capture.read()
+            if not ret:
+                break
+            frame_count += 1
+            if frame_count % skip_rate != 0:
+                continue
+
+            timestamp = frame_count / source_fps
+            for face in app.get(frame):
+                if not is_frontal(face, max_yaw_deg):
+                    continue
+                candidate_idx = match_candidate(
+                    face.embedding, photo_embeddings, similarity_threshold
+                )
+                if candidate_idx is None or found[candidate_idx] is not None:
+                    continue
+                cropped = crop_face_with_padding(frame, face.bbox)
+                if cropped is None:
+                    continue
+                found[candidate_idx] = face.embedding
+                first_crops[candidate_idx] = cropped
+                first_times[candidate_idx] = timestamp
+                label = "A" if candidate_idx == 0 else "B"
+                print(f"First appearance candidate {label} at {timestamp:.1f}s")
+    finally:
+        capture.release()
+
+    if any(emb is None for emb in found):
+        missing = [
+            label
+            for label, emb in zip(("A", "B"), found)
+            if emb is None
+        ]
+        raise RuntimeError(
+            f"Could not find first appearance for candidate(s): {', '.join(missing)}. "
+            "Try lowering --threshold or --max-yaw."
+        )
+
+    for crop, ref_path, t in zip(first_crops, ref_paths, first_times):
+        assert crop is not None and t is not None
+        if ref_path.exists():
+            backup = ref_path.with_name(ref_path.stem + "_prev" + ref_path.suffix)
+            ref_path.replace(backup)
+        ref_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(ref_path), crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        print(f"Updated reference {ref_path} from first appearance at {t:.1f}s")
+
+    return found  # type: ignore[return-value]
+
+
 def process_video(
     app: FaceAnalysis,
     input_video_path: Path,
     output_a_path: Path,
     output_b_path: Path,
+    deleted_path: Path,
     known_embeddings: list[np.ndarray],
     *,
     fps: int = 5,
@@ -143,35 +303,127 @@ def process_video(
     start_seconds: float = 0.0,
     max_seconds: float | None = None,
     progress_interval: int = 600,
-) -> tuple[int, int]:
-    """Detect faces with ArcFace, match candidates, and write cropped-face videos."""
+    resume: bool = False,
+    checkpoint_every_frames: int = 9000,
+) -> tuple[int, int, int, bool]:
+    """
+    Detect faces, write matched/rejected crops as part files, and checkpoint progress.
+
+    Returns (written_a, written_b, written_deleted, completed).
+    completed is False if stopped early via signal.
+    """
+    global _stop_requested
+    _stop_requested = False
+
+    checkpoint_path = checkpoint_path_for(deleted_path)
+    source_fps_probe = cv2.VideoCapture(str(input_video_path))
+    if not source_fps_probe.isOpened():
+        raise ValueError(f"Could not open video: {input_video_path}")
+    source_fps = source_fps_probe.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(source_fps_probe.get(cv2.CAP_PROP_FRAME_COUNT))
+    source_fps_probe.release()
+
+    written_a = 0
+    written_b = 0
+    written_deleted = 0
+    part_index = 0
+    frame_count = int(start_seconds * source_fps)
+
+    if resume:
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
+        ckpt = load_checkpoint(checkpoint_path)
+        if ckpt.get("complete"):
+            print(f"Checkpoint already complete: {checkpoint_path}")
+            return (
+                int(ckpt.get("written_a", 0)),
+                int(ckpt.get("written_b", 0)),
+                int(ckpt.get("written_deleted", 0)),
+                True,
+            )
+        frame_count = int(ckpt["last_frame"])
+        written_a = int(ckpt.get("written_a", 0))
+        written_b = int(ckpt.get("written_b", 0))
+        written_deleted = int(ckpt.get("written_deleted", 0))
+        part_index = int(ckpt.get("part_index", 0))
+        # Drop a corrupt in-progress part left by a hard kill.
+        for final in (output_a_path, output_b_path, deleted_path):
+            candidate = part_path(final, part_index)
+            if candidate.exists() and not is_playable_video(candidate):
+                print(f"Removing incomplete part {candidate}")
+                candidate.unlink(missing_ok=True)
+        print(
+            f"Resuming from frame {frame_count} "
+            f"(part {part_index:03d}, kept A/B/deleted={written_a}/{written_b}/{written_deleted})"
+        )
+
     capture = cv2.VideoCapture(str(input_video_path))
     if not capture.isOpened():
         raise ValueError(f"Could not open video: {input_video_path}")
 
-    source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-    if start_seconds > 0:
-        capture.set(cv2.CAP_PROP_POS_MSEC, start_seconds * 1000)
+    # Seek to resume/start position.
+    if frame_count > 0:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
 
-    fourcc = cv2.VideoWriter_fourcc(*"avc1")
-    writer_a = cv2.VideoWriter(str(output_a_path), fourcc, fps, frame_size)
-    writer_b = cv2.VideoWriter(str(output_b_path), fourcc, fps, frame_size)
-    if not writer_a.isOpened() or not writer_b.isOpened():
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer_a = cv2.VideoWriter(str(output_a_path), fourcc, fps, frame_size)
-        writer_b = cv2.VideoWriter(str(output_b_path), fourcc, fps, frame_size)
-
-    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     max_frame = None
     if max_seconds is not None:
         max_frame = int((start_seconds + max_seconds) * source_fps)
 
-    frame_count = int(start_seconds * source_fps)
-    written_a = 0
-    written_b = 0
+    writer_a = open_video_writer(part_path(output_a_path, part_index), fps, frame_size)
+    writer_b = open_video_writer(part_path(output_b_path, part_index), fps, frame_size)
+    writer_deleted = open_video_writer(part_path(deleted_path, part_index), fps, frame_size)
+    frames_in_part = 0
+    completed = True
+
+    def release_writers() -> None:
+        writer_a.release()
+        writer_b.release()
+        writer_deleted.release()
+
+    def write_checkpoint(next_part: int) -> None:
+        save_checkpoint(
+            checkpoint_path,
+            {
+                "input_video": str(input_video_path),
+                "output_a": str(output_a_path),
+                "output_b": str(output_b_path),
+                "deleted": str(deleted_path),
+                "last_frame": frame_count,
+                "written_a": written_a,
+                "written_b": written_b,
+                "written_deleted": written_deleted,
+                "part_index": next_part,
+                "fps": fps,
+                "frame_size": list(frame_size),
+                "skip_rate": skip_rate,
+                "complete": False,
+            },
+        )
+
+    def rotate_part() -> None:
+        nonlocal writer_a, writer_b, writer_deleted, part_index, frames_in_part
+        release_writers()
+        # Remove empty parts so concat stays clean.
+        for final in (output_a_path, output_b_path, deleted_path):
+            path = part_path(final, part_index)
+            if path.exists() and not is_playable_video(path):
+                path.unlink(missing_ok=True)
+        part_index += 1
+        frames_in_part = 0
+        write_checkpoint(part_index)
+        print(f"Checkpointed at frame {frame_count} -> part {part_index:03d}")
+        writer_a = open_video_writer(part_path(output_a_path, part_index), fps, frame_size)
+        writer_b = open_video_writer(part_path(output_b_path, part_index), fps, frame_size)
+        writer_deleted = open_video_writer(
+            part_path(deleted_path, part_index), fps, frame_size
+        )
 
     try:
         while True:
+            if _stop_requested:
+                completed = False
+                break
+
             ret, frame = capture.read()
             if not ret:
                 break
@@ -188,20 +440,25 @@ def process_video(
                 continue
 
             for face in app.get(frame):
+                cropped_face = crop_face_with_padding(frame, face.bbox)
+                if cropped_face is None:
+                    continue
+                resized_face = cv2.resize(cropped_face, frame_size)
+
                 if not is_frontal(face, max_yaw_deg):
+                    writer_deleted.write(resized_face)
+                    written_deleted += 1
+                    frames_in_part += 1
                     continue
 
                 candidate_idx = match_candidate(
                     face.embedding, known_embeddings, similarity_threshold
                 )
                 if candidate_idx is None:
+                    writer_deleted.write(resized_face)
+                    written_deleted += 1
+                    frames_in_part += 1
                     continue
-
-                cropped_face = crop_face_with_padding(frame, face.bbox)
-                if cropped_face is None:
-                    continue
-
-                resized_face = cv2.resize(cropped_face, frame_size)
 
                 if candidate_idx == 0:
                     writer_a.write(resized_face)
@@ -209,12 +466,55 @@ def process_video(
                 else:
                     writer_b.write(resized_face)
                     written_b += 1
+                frames_in_part += 1
+
+            if (
+                checkpoint_every_frames > 0
+                and frame_count % checkpoint_every_frames == 0
+                and frames_in_part > 0
+            ):
+                rotate_part()
     finally:
         capture.release()
-        writer_a.release()
-        writer_b.release()
+        release_writers()
+        # Drop empty trailing part.
+        for final in (output_a_path, output_b_path, deleted_path):
+            path = part_path(final, part_index)
+            if path.exists() and not is_playable_video(path):
+                path.unlink(missing_ok=True)
 
-    return written_a, written_b
+        if completed:
+            print("Assembling final videos from parts...")
+            concat_parts(output_a_path, fps, frame_size)
+            concat_parts(output_b_path, fps, frame_size)
+            concat_parts(deleted_path, fps, frame_size)
+            save_checkpoint(
+                checkpoint_path,
+                {
+                    "input_video": str(input_video_path),
+                    "output_a": str(output_a_path),
+                    "output_b": str(output_b_path),
+                    "deleted": str(deleted_path),
+                    "last_frame": frame_count,
+                    "written_a": written_a,
+                    "written_b": written_b,
+                    "written_deleted": written_deleted,
+                    "part_index": part_index,
+                    "fps": fps,
+                    "frame_size": list(frame_size),
+                    "skip_rate": skip_rate,
+                    "complete": True,
+                },
+            )
+        else:
+            # Next resume opens a fresh part after the ones we just finalized.
+            write_checkpoint(part_index + 1)
+            print(
+                f"Stopped early at frame {frame_count}. "
+                f"Resume with --resume (checkpoint: {checkpoint_path})"
+            )
+
+    return written_a, written_b, written_deleted, completed
 
 
 def resolve_output_paths(
@@ -222,16 +522,18 @@ def resolve_output_paths(
     output_dir: Path,
     output_a: Path | None,
     output_b: Path | None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     """Place exports in output_dir/<debate>/<candidate>/ unless paths are given explicitly."""
     run_dir = output_dir / input_video.stem
     path_a = output_a or run_dir / "candidate_A_clean" / "candidate_A_clean.mp4"
     path_b = output_b or run_dir / "candidate_B_clean" / "candidate_B_clean.mp4"
-    if not output_a:
-        path_a.parent.mkdir(parents=True, exist_ok=True)
-    if not output_b:
-        path_b.parent.mkdir(parents=True, exist_ok=True)
-    return path_a, path_b
+    deleted = run_dir / "deleted_faces.mp4"
+    if output_a is not None:
+        deleted = output_a.parent.parent / "deleted_faces.mp4"
+    path_a.parent.mkdir(parents=True, exist_ok=True)
+    path_b.parent.mkdir(parents=True, exist_ok=True)
+    deleted.parent.mkdir(parents=True, exist_ok=True)
+    return path_a, path_b, deleted
 
 
 def parse_args() -> argparse.Namespace:
@@ -248,13 +550,13 @@ def parse_args() -> argparse.Namespace:
         "--candidate-a",
         type=Path,
         default=Path("candidate_A.jpg"),
-        help="Reference photo for candidate A.",
+        help="Bootstrap reference photo for candidate A (overwritten with first appearance).",
     )
     parser.add_argument(
         "--candidate-b",
         type=Path,
         default=Path("candidate_B.jpg"),
-        help="Reference photo for candidate B.",
+        help="Bootstrap reference photo for candidate B (overwritten with first appearance).",
     )
     parser.add_argument(
         "--output-dir",
@@ -278,7 +580,7 @@ def parse_args() -> argparse.Namespace:
         "--start-seconds",
         type=float,
         default=400.0,
-        help="Skip this many seconds at the start (default skips intro).",
+        help="Skip this many seconds at the start of the main export pass (default skips intro).",
     )
     parser.add_argument(
         "--max-seconds",
@@ -287,10 +589,10 @@ def parse_args() -> argparse.Namespace:
         help="Optional limit on how many seconds of video to process.",
     )
     parser.add_argument(
-        "--calibrate-seconds",
+        "--first-appearance-start",
         type=float,
-        default=500.0,
-        help="Extract reference faces from this timestamp in the debate video.",
+        default=0.0,
+        help="Where to start searching for each candidate's first appearance (default: 0).",
     )
     parser.add_argument("--fps", type=int, default=5)
     parser.add_argument(
@@ -312,11 +614,24 @@ def parse_args() -> argparse.Namespace:
         default=30.0,
         help="Skip faces turned more than this many degrees left/right (yaw).",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue from Exported/<debate>/preprocess_checkpoint.json and append new parts.",
+    )
+    parser.add_argument(
+        "--checkpoint-every-frames",
+        type=int,
+        default=9000,
+        help="Finalize a part and write checkpoint every N source frames (default: 9000 ≈5 min at 30fps).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
 
     input_video = args.input_video.expanduser()
     if not input_video.exists():
@@ -328,23 +643,47 @@ def main() -> None:
 
     print("Loading ArcFace model...")
     app = create_face_app()
-    photo_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
-    known_embeddings = calibrate_from_video(
-        app, input_video, photo_embeddings, args.calibrate_seconds
-    )
+
+    if args.resume:
+        print("Resume mode: loading embeddings from current reference images...")
+        known_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
+    else:
+        photo_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
+        print("Finding first appearance of each candidate for reference images...")
+        known_embeddings = find_first_appearances(
+            app,
+            input_video,
+            photo_embeddings,
+            [args.candidate_a.expanduser(), args.candidate_b.expanduser()],
+            similarity_threshold=args.threshold,
+            max_yaw_deg=args.max_yaw,
+            skip_rate=args.skip_rate,
+            search_start_seconds=args.first_appearance_start,
+        )
 
     for label, embedding in zip(("A", "B"), known_embeddings):
         sim = cosine_similarity(embedding, embedding)
         print(f"  Candidate {label} self-similarity: {sim:.3f}")
 
-    output_a, output_b = resolve_output_paths(
+    output_a, output_b, deleted_path = resolve_output_paths(
         input_video, args.output_dir, args.output_a, args.output_b
     )
-    written_a, written_b = process_video(
+
+    if not args.resume:
+        # Fresh run: clear old parts/finals/checkpoint for these outputs.
+        ckpt = checkpoint_path_for(deleted_path)
+        ckpt.unlink(missing_ok=True)
+        for final in (output_a, output_b, deleted_path):
+            final.unlink(missing_ok=True)
+            for part in list_part_files(final):
+                part.unlink(missing_ok=True)
+
+    written_a, written_b, written_deleted, completed = process_video(
         app,
         input_video,
         output_a,
         output_b,
+        deleted_path,
         known_embeddings,
         fps=args.fps,
         frame_size=(args.frame_size, args.frame_size),
@@ -353,9 +692,15 @@ def main() -> None:
         max_yaw_deg=args.max_yaw,
         start_seconds=args.start_seconds,
         max_seconds=args.max_seconds,
+        resume=args.resume,
+        checkpoint_every_frames=args.checkpoint_every_frames,
     )
     print(f"Wrote {written_a} frames to {output_a}")
     print(f"Wrote {written_b} frames to {output_b}")
+    print(f"Wrote {written_deleted} rejected faces to {deleted_path}")
+    if not completed:
+        print("Run incomplete — re-run with the same args plus --resume to continue.")
+        sys.exit(2)
     if written_a == 0 and written_b == 0:
         raise RuntimeError(
             "No faces matched either candidate. Check reference photos and "
