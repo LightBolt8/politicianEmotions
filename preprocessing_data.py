@@ -207,86 +207,6 @@ def load_checkpoint(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def find_first_appearances(
-    app: FaceAnalysis,
-    video_path: Path,
-    photo_embeddings: list[np.ndarray],
-    ref_paths: list[Path],
-    *,
-    similarity_threshold: float,
-    max_yaw_deg: float,
-    skip_rate: int = 6,
-    search_start_seconds: float = 0.0,
-) -> list[np.ndarray]:
-    """
-    Find the first frontal matched frame for each candidate, overwrite ref images
-    with those crops, and return debate-frame embeddings for matching.
-    """
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise ValueError(f"Could not open video: {video_path}")
-
-    source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-    if search_start_seconds > 0:
-        capture.set(cv2.CAP_PROP_POS_MSEC, search_start_seconds * 1000)
-
-    found: list[np.ndarray | None] = [None, None]
-    first_crops: list[np.ndarray | None] = [None, None]
-    first_times: list[float | None] = [None, None]
-    frame_count = int(search_start_seconds * source_fps)
-
-    try:
-        while any(emb is None for emb in found):
-            ret, frame = capture.read()
-            if not ret:
-                break
-            frame_count += 1
-            if frame_count % skip_rate != 0:
-                continue
-
-            timestamp = frame_count / source_fps
-            for face in app.get(frame):
-                if not is_frontal(face, max_yaw_deg):
-                    continue
-                candidate_idx = match_candidate(
-                    face.embedding, photo_embeddings, similarity_threshold
-                )
-                if candidate_idx is None or found[candidate_idx] is not None:
-                    continue
-                cropped = crop_face_with_padding(frame, face.bbox)
-                if cropped is None:
-                    continue
-                found[candidate_idx] = face.embedding
-                first_crops[candidate_idx] = cropped
-                first_times[candidate_idx] = timestamp
-                label = "A" if candidate_idx == 0 else "B"
-                print(f"First appearance candidate {label} at {timestamp:.1f}s")
-    finally:
-        capture.release()
-
-    if any(emb is None for emb in found):
-        missing = [
-            label
-            for label, emb in zip(("A", "B"), found)
-            if emb is None
-        ]
-        raise RuntimeError(
-            f"Could not find first appearance for candidate(s): {', '.join(missing)}. "
-            "Try lowering --threshold or --max-yaw."
-        )
-
-    for crop, ref_path, t in zip(first_crops, ref_paths, first_times):
-        assert crop is not None and t is not None
-        if ref_path.exists():
-            backup = ref_path.with_name(ref_path.stem + "_prev" + ref_path.suffix)
-            ref_path.replace(backup)
-        ref_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(ref_path), crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-        print(f"Updated reference {ref_path} from first appearance at {t:.1f}s")
-
-    return found  # type: ignore[return-value]
-
-
 def process_video(
     app: FaceAnalysis,
     input_video_path: Path,
@@ -592,17 +512,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional limit on how many seconds of video to process.",
     )
-    parser.add_argument(
-        "--update-refs-from-first-appearance",
-        action="store_true",
-        help="Overwrite ref images with each candidate's first frontal match in the video.",
-    )
-    parser.add_argument(
-        "--first-appearance-start",
-        type=float,
-        default=0.0,
-        help="With --update-refs-from-first-appearance, where to start searching (default: 0).",
-    )
     parser.add_argument("--fps", type=int, default=5)
     parser.add_argument(
         "--frame-size",
@@ -652,23 +561,8 @@ def main() -> None:
 
     print("Loading ArcFace model...")
     app = create_face_app()
-
-    if args.update_refs_from_first_appearance and not args.resume:
-        print("Finding first appearance of each candidate for reference images...")
-        photo_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
-        known_embeddings = find_first_appearances(
-            app,
-            input_video,
-            photo_embeddings,
-            [args.candidate_a.expanduser(), args.candidate_b.expanduser()],
-            similarity_threshold=args.threshold,
-            max_yaw_deg=args.max_yaw,
-            skip_rate=args.skip_rate,
-            search_start_seconds=args.first_appearance_start,
-        )
-    else:
-        print("Loading embeddings from reference images...")
-        known_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
+    print("Loading embeddings from reference images...")
+    known_embeddings = build_known_embeddings(app, args.candidate_a, args.candidate_b)
 
     for label, embedding in zip(("A", "B"), known_embeddings):
         sim = cosine_similarity(embedding, embedding)
