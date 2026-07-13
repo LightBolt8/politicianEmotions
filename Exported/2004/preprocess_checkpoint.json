@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2004.mp4",
+  "output_a": "Exported/2004/Bush_clean_2004/Bush_clean_2004.mp4",
+  "output_b": "Exported/2004/Kerry_clean_2004/Kerry_clean_2004.mp4",
+  "deleted": "Exported/2004/deleted_faces.mp4",
+  "last_frame": 167953,
+  "written_a": 11469,
+  "written_b": 11080,
+  "written_deleted": 7829,
+  "part_index": 18,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}

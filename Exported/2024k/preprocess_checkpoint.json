@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2024k.mp4",
+  "output_a": "Exported/2024k/Trump_clean_2024/Trump_clean_2024.mp4",
+  "output_b": "Exported/2024k/Harris_clean_2024/Harris_clean_2024.mp4",
+  "deleted": "Exported/2024k/deleted_faces.mp4",
+  "last_frame": 188864,
+  "written_a": 22596,
+  "written_b": 21232,
+  "written_deleted": 16569,
+  "part_index": 20,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}

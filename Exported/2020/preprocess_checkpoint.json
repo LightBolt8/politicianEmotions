@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2020.mp4",
+  "output_a": "Exported/2020/Trump_clean_2020/Trump_clean_2020.mp4",
+  "output_b": "Exported/2020/Biden_clean_2020/Biden_clean_2020.mp4",
+  "deleted": "Exported/2020/deleted_faces.mp4",
+  "last_frame": 172170,
+  "written_a": 20511,
+  "written_b": 20590,
+  "written_deleted": 9600,
+  "part_index": 19,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}

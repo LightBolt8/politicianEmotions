@@ -11,12 +11,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-ANGER_AUS = ("AU04", "AU05", "AU07", "AU23")
+ANGER_AUS = ("AU04", "AU05", "AU07")
 ANGER_LABELS = {
     "AU04": "Brow lowerer",
     "AU05": "Upper lid raiser",
     "AU07": "Lid tightener",
-    "AU23": "Lip tightener",
 }
 EXTRA_AUS = ("AU12", "AU14", "AU17", "AU26")
 EXTRA_LABELS = {
