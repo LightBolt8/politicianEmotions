@@ -170,11 +170,106 @@ def build_violin_long_frame(
 
 
 def au_panel_label(au: str) -> str:
+    # Single-line titles avoid colliding with the figure title.
     if au in ANGER_LABELS:
-        return f"{au}\n{ANGER_LABELS[au]}"
+        return f"{au} — {ANGER_LABELS[au]}"
     if au in EXTRA_LABELS:
-        return f"{au}\n{EXTRA_LABELS[au]}"
+        return f"{au} — {EXTRA_LABELS[au]}"
     return au
+
+
+def build_au_summary_table(
+    frame_data: dict[str, pd.DataFrame],
+    aus: tuple[str, ...] = ANGER_AUS,
+) -> pd.DataFrame:
+    """Mean / SD / n frames for each candidate × AU (spreadsheet-ready)."""
+    rows: list[dict[str, object]] = []
+    for label, df in frame_data.items():
+        row: dict[str, object] = {"candidate": label, "n_frames": len(df)}
+        for au in aus:
+            col = f"{au}_r"
+            if col not in df.columns:
+                row[f"{au}_mean"] = float("nan")
+                row[f"{au}_sd"] = float("nan")
+                continue
+            series = df[col]
+            row[f"{au}_mean"] = float(series.mean())
+            row[f"{au}_sd"] = float(series.std(ddof=1)) if len(series) > 1 else 0.0
+        rows.append(row)
+    return pd.DataFrame.from_records(rows)
+
+
+def export_au_spreadsheet(summary: pd.DataFrame, output_path: Path) -> Path:
+    """Write AU4/5/7 summary as .xlsx (falls back to .csv if openpyxl missing)."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        summary.to_excel(output_path, index=False, sheet_name="AU4_5_7")
+        return output_path
+    except ImportError:
+        csv_path = output_path.with_suffix(".csv")
+        summary.to_csv(csv_path, index=False)
+        return csv_path
+
+
+def plot_au_summary_table(summary: pd.DataFrame, output_path: Path) -> None:
+    """Render AU4/5/7 means (± SD) as a table image."""
+    display = pd.DataFrame(
+        {
+            "Candidate": summary["candidate"],
+            "n": summary["n_frames"].map(lambda n: f"{int(n):,}"),
+            "AU04": [
+                f"{m:.3f} ± {s:.3f}"
+                for m, s in zip(summary["AU04_mean"], summary["AU04_sd"])
+            ],
+            "AU05": [
+                f"{m:.3f} ± {s:.3f}"
+                for m, s in zip(summary["AU05_mean"], summary["AU05_sd"])
+            ],
+            "AU07": [
+                f"{m:.3f} ± {s:.3f}"
+                for m, s in zip(summary["AU07_mean"], summary["AU07_sd"])
+            ],
+        }
+    )
+
+    n_rows = len(display)
+    fig_h = max(3.2, 0.42 * n_rows + 1.4)
+    fig, ax = plt.subplots(figsize=(10.5, fig_h))
+    ax.axis("off")
+    ax.set_title(
+        "Mean AU intensity (± SD) — AU04 / AU05 / AU07",
+        fontsize=13,
+        pad=12,
+        fontweight="bold",
+    )
+
+    table = ax.table(
+        cellText=display.values.tolist(),
+        colLabels=list(display.columns),
+        loc="center",
+        cellLoc="center",
+        colLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1.0, 1.45)
+
+    for (row, col), cell in table.get_celld().items():
+        cell.set_edgecolor("#d4d4d8")
+        cell.set_linewidth(0.6)
+        if row == 0:
+            cell.set_facecolor("#27272a")
+            cell.set_text_props(color="white", fontweight="bold")
+            cell.set_height(0.08)
+        else:
+            cell.set_facecolor("#fafafa" if row % 2 else "white")
+        if col == 0:
+            cell.set_text_props(ha="left")
+            cell.PAD = 0.04
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight", pad_inches=0.25)
+    plt.close(fig)
 
 
 def plot_violins(
@@ -191,7 +286,12 @@ def plot_violins(
 
     ncols = min(3, len(aus))
     nrows = int(np.ceil(len(aus) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.8 * nrows), constrained_layout=True)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5.2 * ncols, 4.2 * nrows),
+        layout="constrained",
+    )
     axes_flat = np.atleast_1d(axes).flatten()
 
     for ax, au in zip(axes_flat, aus):
@@ -209,7 +309,7 @@ def plot_violins(
             ax=ax,
             legend=False,
         )
-        ax.set_title(au_panel_label(au), fontsize=10)
+        ax.set_title(au_panel_label(au), fontsize=10, pad=8)
         ax.set_xlabel("")
         ax.set_ylabel("Intensity")
         ax.set_ylim(0, min(5.0, panel["intensity"].quantile(0.995) * 1.15 + 0.1))
@@ -218,9 +318,10 @@ def plot_violins(
     for ax in axes_flat[len(aus) :]:
         ax.axis("off")
 
-    fig.suptitle("AU intensity distributions by candidate", fontsize=14, y=1.01)
+    fig.suptitle("AU intensity distributions by candidate", fontsize=14)
+    fig.set_constrained_layout_pads(w_pad=0.04, h_pad=0.08, hspace=0.12, wspace=0.08)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.25)
     plt.close(fig)
 
 
@@ -263,6 +364,11 @@ def run_comparison(
     plot_heatmap(anger_matrix, output_dir / "au_heatmap.png")
     anger_matrix.to_csv(output_dir / "au_heatmap_data.csv")
 
+    summary = build_au_summary_table(frame_data, ANGER_AUS)
+    summary_path = export_au_spreadsheet(summary, output_dir / "au4_5_7_summary.xlsx")
+    summary.to_csv(output_dir / "au4_5_7_summary.csv", index=False)
+    plot_au_summary_table(summary, output_dir / "au4_5_7_summary.png")
+
     violin_aus = ANGER_AUS
     long_df = build_violin_long_frame(frame_data, violin_aus)
     candidate_order = [label for label, _ in candidates]
@@ -270,6 +376,9 @@ def run_comparison(
 
     print(f"Wrote {output_dir / 'au_heatmap.png'}")
     print(f"Wrote {output_dir / 'au_violins.png'}")
+    print(f"Wrote {output_dir / 'au4_5_7_summary.png'}")
+    print(f"Wrote {summary_path}")
+    print(f"Wrote {output_dir / 'au4_5_7_summary.csv'}")
 
 
 def main() -> None:
