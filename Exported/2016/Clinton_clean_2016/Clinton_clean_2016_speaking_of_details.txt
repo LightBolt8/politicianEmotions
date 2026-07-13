@@ -1,0 +1,10 @@
+Input:/Users/bryanhan/politicianEmotions/Exported/2016/Clinton_clean_2016/Clinton_clean_2016_speaking.mp4
+Input full path:/Users/bryanhan/politicianEmotions/Exported/2016/Clinton_clean_2016/Clinton_clean_2016_speaking.mp4
+Camera parameters:233.333,233.333,128,128
+Output csv:Clinton_clean_2016_speaking.csv
+Gaze: 1
+AUs: 1
+Landmarks 2D: 0
+Landmarks 3D: 0
+Pose: 1
+Shape parameters: 0

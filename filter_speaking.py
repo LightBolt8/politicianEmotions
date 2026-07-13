@@ -1,4 +1,8 @@
-"""Keep only face-crop frames where OpenFace AU25_c == 1 (lips part / speaking proxy)."""
+"""Build speaking/nonspeaking face-crop videos from full-video OpenFace AU25_c.
+
+Uses the full clean OpenFace CSV only as a frame mask. Analysis OpenFace CSVs for
+speaking clips should be produced by running OpenFace on *_speaking.mp4.
+"""
 
 from __future__ import annotations
 
@@ -25,21 +29,26 @@ def filter_video(
     video_path: Path,
     csv_path: Path | None = None,
     output_video: Path | None = None,
-    output_csv: Path | None = None,
+    output_deleted_video: Path | None = None,
     *,
     require_success: bool = True,
-) -> tuple[int, int]:
+    write_deleted: bool = True,
+) -> tuple[int, int, int]:
     """
-    Write a speaking-only video/CSV keeping frames with AU25_c == 1.
+    Write speaking-only (and optionally nonspeaking) videos using AU25_c == 1.
 
-    Returns (kept_frames, total_frames).
+    Does not write a speaking CSV — run OpenFace on the speaking video for that.
+
+    Returns (kept_frames, deleted_frames, total_frames).
     """
     video_path = video_path.expanduser().resolve()
     csv_path = (csv_path or video_path.with_suffix(".csv")).expanduser().resolve()
     if output_video is None:
         output_video = video_path.with_name(f"{video_path.stem}_speaking{video_path.suffix}")
-    if output_csv is None:
-        output_csv = csv_path.with_name(f"{csv_path.stem}_speaking.csv")
+    if output_deleted_video is None:
+        output_deleted_video = video_path.with_name(
+            f"{video_path.stem}_nonspeaking{video_path.suffix}"
+        )
 
     if not video_path.is_file():
         raise FileNotFoundError(f"Video not found: {video_path}")
@@ -74,49 +83,60 @@ def filter_video(
         keep &= success == 1
 
     keep_flags = keep.tolist()
-    kept_df = df.loc[keep].copy()
-    # Re-index frame/timestamp for the filtered clip.
-    kept_df["frame"] = range(1, len(kept_df) + 1)
-    if "timestamp" in kept_df.columns:
-        kept_df["timestamp"] = [(i / fps) for i in range(len(kept_df))]
-
     writer = open_video_writer(output_video, fps, (width, height))
+    deleted_writer = (
+        open_video_writer(output_deleted_video, fps, (width, height))
+        if write_deleted
+        else None
+    )
     kept = 0
+    deleted = 0
     try:
         for idx in range(n_video):
             ret, frame = capture.read()
             if not ret:
                 break
-            if not keep_flags[idx]:
-                continue
-            writer.write(frame)
-            kept += 1
+            if keep_flags[idx]:
+                writer.write(frame)
+                kept += 1
+            elif deleted_writer is not None:
+                deleted_writer.write(frame)
+                deleted += 1
     finally:
         capture.release()
         writer.release()
+        if deleted_writer is not None:
+            deleted_writer.release()
 
-    kept_df.to_csv(output_csv, index=False)
-    print(
+    msg = (
         f"{video_path.name}: kept {kept}/{n_video} "
         f"({100 * kept / max(n_video, 1):.1f}%) -> {output_video.name}"
     )
-    return kept, n_video
+    if write_deleted:
+        msg += f"; nonspeaking {deleted} -> {output_deleted_video.name}"
+    print(msg)
+    return kept, deleted, n_video
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Discard non-speaking frames (AU25_c != 1) from face-crop videos."
+        description="Build speaking/nonspeaking videos from AU25_c on full clean OpenFace CSVs."
     )
     parser.add_argument(
         "videos",
         nargs="+",
         type=Path,
-        help="Face-crop mp4 paths (OpenFace CSV must sit beside each video).",
+        help="Face-crop mp4 paths (full OpenFace CSV must sit beside each video).",
     )
     parser.add_argument(
         "--keep-failed-tracks",
         action="store_true",
         help="Do not also require OpenFace success == 1.",
+    )
+    parser.add_argument(
+        "--no-deleted",
+        action="store_true",
+        help="Do not write the complementary nonspeaking video.",
     )
     return parser.parse_args()
 
@@ -124,7 +144,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     for video in args.videos:
-        filter_video(video, require_success=not args.keep_failed_tracks)
+        filter_video(
+            video,
+            require_success=not args.keep_failed_tracks,
+            write_deleted=not args.no_deleted,
+        )
 
 
 if __name__ == "__main__":

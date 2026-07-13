@@ -110,8 +110,24 @@ def find_feature_extraction(explicit: Path | None) -> Path:
     )
 
 
+def _is_analysis_video(path: Path) -> bool:
+    """Candidate face crops only; skip deleted/nonspeaking/firstRun junk."""
+    name = path.name
+    if "firstRun" in path.parts:
+        return False
+    if name in {"deleted_faces.mp4"} or name.endswith("_nonspeaking.mp4"):
+        return False
+    if "candidate_A_clean" in path.parts or "candidate_B_clean" in path.parts:
+        return False
+    return "_clean_" in path.stem and path.suffix.lower() == ".mp4"
+
+
 def discover_videos(data_dir: Path, videos: list[Path] | None) -> list[Path]:
-    """Return processed MP4 files to analyze."""
+    """Return face-crop MP4s to analyze.
+
+    Prefer *_speaking.mp4 when present (post-AU25 filter). Otherwise use the
+    full clean video (e.g. 2008 and earlier, or before speaking filter exists).
+    """
     if videos:
         found = [path.expanduser().resolve() for path in videos]
         missing = [path for path in found if not path.is_file()]
@@ -122,7 +138,24 @@ def discover_videos(data_dir: Path, videos: list[Path] | None) -> list[Path]:
     if not data_dir.is_dir():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    found = sorted(data_dir.rglob("*.mp4"))
+    all_mp4 = [p for p in sorted(data_dir.rglob("*.mp4")) if _is_analysis_video(p)]
+    by_folder: dict[Path, list[Path]] = {}
+    for path in all_mp4:
+        by_folder.setdefault(path.parent, []).append(path)
+
+    found: list[Path] = []
+    for folder, paths in sorted(by_folder.items()):
+        speaking = [p for p in paths if p.stem.endswith("_speaking")]
+        if speaking:
+            found.extend(speaking)
+            continue
+        # Full clean only (exclude any leftover speaking/nonspeaking names).
+        found.extend(
+            p
+            for p in paths
+            if not p.stem.endswith("_speaking") and not p.stem.endswith("_nonspeaking")
+        )
+
     if not found:
         raise FileNotFoundError(f"No .mp4 files found under {data_dir}")
     return found

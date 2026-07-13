@@ -23,20 +23,25 @@ OTHER_COLOR = "#2563eb"
 DEFAULT_DATA_DIR = Path("Exported")
 
 
-def openface_csv_for_video(video_path: Path) -> Path:
-    """OpenFace CSV lives alongside the source video; prefer speaking CSV after 2008."""
-    base = video_path.parent / f"{video_path.stem}.csv"
-    speaking = video_path.parent / f"{video_path.stem}_speaking.csv"
-    # Year suffix like 2016, 2024, 2024b, 2024k
-    year_match = re.search(r"_clean_(\d+)", video_path.stem)
+def analysis_video_for(clean_video: Path) -> Path:
+    """Prefer the speaking clip for post-2008 debates when it exists."""
+    stem = clean_video.stem.removesuffix("_speaking").removesuffix("_nonspeaking")
+    year_match = re.search(r"_clean_(\d+)", stem)
     year = int(year_match.group(1)) if year_match else 0
+    speaking = clean_video.parent / f"{stem}_speaking.mp4"
     if year > 2008 and speaking.is_file():
         return speaking
-    return base
+    return clean_video.parent / f"{stem}.mp4"
+
+
+def openface_csv_for_video(video_path: Path) -> Path:
+    """OpenFace CSV for the analysis video (speaking.mp4 → speaking.csv)."""
+    analysis = analysis_video_for(video_path)
+    return analysis.with_suffix(".csv")
 
 
 def parse_video_name(video_path: Path) -> tuple[str, str]:
-    stem = video_path.stem.removesuffix("_speaking")
+    stem = video_path.stem.removesuffix("_speaking").removesuffix("_nonspeaking")
     if "_clean_" not in stem:
         raise ValueError(f"Expected Name_clean_YEAR.mp4, got: {video_path.name}")
     candidate, year = stem.rsplit("_clean_", 1)
@@ -44,15 +49,18 @@ def parse_video_name(video_path: Path) -> tuple[str, str]:
 
 
 def discover_exports(data_dir: Path) -> list[Path]:
-    return sorted(
+    """Discover analysis videos: speaking clips when present, else full clean."""
+    cleans = sorted(
         path
         for path in data_dir.rglob("*_clean_*.mp4")
-        if path.parent.name == path.stem
-        and "speaking" not in path.name
+        if path.parent.name == path.stem.removesuffix("_speaking").removesuffix("_nonspeaking")
+        and not path.stem.endswith("_speaking")
+        and not path.stem.endswith("_nonspeaking")
         and "firstRun" not in path.parts
         and "candidate_A_clean" not in path.parts
         and "candidate_B_clean" not in path.parts
     )
+    return [analysis_video_for(path) for path in cleans]
 
 
 def run_openface_if_needed(
@@ -65,13 +73,14 @@ def run_openface_if_needed(
         return
     from run_openface import find_feature_extraction, run_openface_on_video
 
+    analysis = analysis_video_for(video_path)
     binary = find_feature_extraction(openface_bin)
     openface_cwd = binary.parent.parent.parent if binary.parent.name == "bin" else None
     if openface_cwd is not None and not (openface_cwd / "model").is_dir():
         openface_cwd = None
     run_openface_on_video(
         binary,
-        video_path.resolve(),
+        analysis.resolve(),
         csv_path.parent,
         openface_cwd=openface_cwd,
         tracked=False,
@@ -200,16 +209,17 @@ def analyze_video(
     openface_bin: Path | None,
     run_openface: bool,
 ) -> Path:
-    candidate, year = parse_video_name(video_path)
-    csv_path = openface_csv_for_video(video_path)
+    analysis_video = analysis_video_for(video_path)
+    candidate, year = parse_video_name(analysis_video)
+    csv_path = openface_csv_for_video(analysis_video)
     if run_openface:
-        run_openface_if_needed(video_path, csv_path, openface_bin=openface_bin)
+        run_openface_if_needed(analysis_video, csv_path, openface_bin=openface_bin)
     if not csv_path.is_file():
         raise FileNotFoundError(
             f"OpenFace CSV not found: {csv_path}. Run run_openface.py first or pass --run-openface."
         )
 
-    work_dir = video_path.parent
+    work_dir = analysis_video.parent
     plots_dir = work_dir / "plots"
     title = f"{candidate} ({year})"
 

@@ -48,10 +48,12 @@ def csv_path_for(data_root: Path, relative: str) -> Path:
 
 
 def discover_all_candidates(data_root: Path) -> list[tuple[str, Path]]:
-    """Prefer speaking CSVs for debates after 2008; use full CSVs for 2008 and earlier."""
+    """Prefer OpenFace CSVs from speaking videos after 2008; full CSVs otherwise."""
     found: list[tuple[str, Path, tuple[int, str]]] = []
     for csv_path in sorted(data_root.rglob("*_clean_*.csv")):
         stem = csv_path.stem
+        if stem.endswith("_nonspeaking"):
+            continue
         speaking = stem.endswith("_speaking")
         base_stem = stem[: -len("_speaking")] if speaking else stem
         if "_clean_" not in base_stem:
@@ -64,9 +66,11 @@ def discover_all_candidates(data_root: Path) -> list[tuple[str, Path]]:
         # No AU25 speaking filter for 2008 and earlier.
         if year_key <= 2008 and speaking:
             continue
+        # After 2008, require speaking OpenFace CSV when the speaking video exists.
         if year_key > 2008 and not speaking:
+            speaking_video = csv_path.with_name(f"{base_stem}_speaking.mp4")
             speaking_csv = csv_path.with_name(f"{base_stem}_speaking.csv")
-            if speaking_csv.is_file():
+            if speaking_video.is_file() or speaking_csv.is_file():
                 continue
         label = f"{candidate} {year}"
         found.append((label, csv_path, (year_key, candidate)))
