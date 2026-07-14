@@ -4,7 +4,9 @@ For each sampled Dataset frame:
   1. Accurately cut 1-min clips (ffmpeg -ss after -i), read them sequentially
      (avoid OpenCV seeks on the full Dataset, which can desync timestamps).
   2. ArcFace match → matched 0/1
-  3. Face crop → short per-candidate clip → OpenFace
+  3. Face crop → per-window per-candidate clip → OpenFace
+     (windows are not concatenated — Movement / turns cannot leak across
+     10–11 / 40–41 / 70–71).
   4. Speaking = Movement > τ* (τ* from full clean CSV, same Otsu×factor
      as the main pipeline; no new Otsu on shorts), then consolidate_turns.
      Same per-candidate rules as filter_speaking — no cross-candidate
@@ -227,12 +229,20 @@ def speaking_on_crops(
     *,
     openface_bin: Path,
     openface_cwd: Path | None,
+    warmup_frames: int = DEFAULT_WINDOW_FRAMES,
 ) -> list[int]:
-    """OpenFace crop strip; Movement > τ*, then turn consolidation."""
+    """OpenFace one window's crops; Movement > τ*, then turn consolidation.
+
+    Prepends warmup_frames copies of the first crop so the rolling Movement
+    window is defined at clip t=0; pad flags are discarded. Call once per
+    window so Movement/turns never span 10–11 → 40–41 → 70–71.
+    """
     if not crops:
         return []
+    pad_n = max(0, int(warmup_frames))
+    padded = ([crops[0]] * pad_n + list(crops)) if pad_n else list(crops)
     video = work_dir / "crops.mp4"
-    write_crop_video(crops, video)
+    write_crop_video(padded, video)
     run_openface_on_video(openface_bin, video, work_dir, openface_cwd=openface_cwd)
     csv_path = work_dir / f"{video.stem}.csv"
     if not csv_path.is_file():
@@ -256,6 +266,7 @@ def speaking_on_crops(
         min_turn_frames=DEFAULT_MIN_TURN_FRAMES,
     )
     flags = keep.astype(int).tolist()
+    flags = flags[pad_n : pad_n + len(crops)]
     if len(flags) < len(crops):
         flags.extend([0] * (len(crops) - len(flags)))
     return flags[: len(crops)]
@@ -322,7 +333,7 @@ def main() -> None:
                 continue
             end = min(t1, src_dur)
             clip = CLIPS / f"source_{year}_{window}.mp4"
-            ffmpeg_cut(dataset, t0, end, clip, force=True)
+            ffmpeg_cut(dataset, t0, end, clip, force=False)
 
             clip_cap = cv2.VideoCapture(str(clip))
             if not clip_cap.isOpened():
@@ -379,7 +390,8 @@ def main() -> None:
                 idx += 1
             clip_cap.release()
 
-        # OpenFace + speaking using precomputed τ* (absolute mode — no new Otsu)
+        # OpenFace + speaking per window (absolute τ* from full clean).
+        # Do not concatenate windows — that leaked Movement across clip boundaries.
         speaking_by_name: dict[str, list[int]] = {}
         matched_by_name: dict[str, list[int]] = {}
         base_rows: list[dict] | None = None
@@ -395,28 +407,38 @@ def main() -> None:
                     }
                     for row, _ in items
                 ]
-            crop_indices = [i for i, (_, c) in enumerate(items) if c is not None]
-            crops = [items[i][1] for i in crop_indices]
+            speaking = [0] * len(items)
+            matched_by_name[name] = [int(row["matched"]) for row, _ in items]
+
+            by_window: dict[str, list[int]] = {}
+            for i, (row, crop) in enumerate(items):
+                if crop is None:
+                    continue
+                by_window.setdefault(row["window"], []).append(i)
+
+            total = sum(len(v) for v in by_window.values())
             print(
-                f"  {name}: {len(crops)} matched crops → OpenFace (τ*={taus[name]:.4f})",
+                f"  {name}: {total} matched crops → OpenFace per window "
+                f"(τ*={taus[name]:.4f})",
                 flush=True,
             )
-            work = WORK / year / name
-            if work.exists():
-                shutil.rmtree(work)
-            work.mkdir(parents=True, exist_ok=True)
-            flags = speaking_on_crops(
-                crops,
-                taus[name],
-                work,
-                openface_bin=openface_bin,
-                openface_cwd=openface_cwd,
-            )
-            speaking = [0] * len(items)
-            for j, i in enumerate(crop_indices):
-                speaking[i] = int(flags[j]) if j < len(flags) else 0
+            for window, crop_indices in by_window.items():
+                crops = [items[i][1] for i in crop_indices]
+                work = WORK / year / name / window
+                if work.exists():
+                    shutil.rmtree(work)
+                work.mkdir(parents=True, exist_ok=True)
+                flags = speaking_on_crops(
+                    crops,
+                    taus[name],
+                    work,
+                    openface_bin=openface_bin,
+                    openface_cwd=openface_cwd,
+                    warmup_frames=DEFAULT_WINDOW_FRAMES,
+                )
+                for j, i in enumerate(crop_indices):
+                    speaking[i] = int(flags[j]) if j < len(flags) else 0
             speaking_by_name[name] = speaking
-            matched_by_name[name] = [int(row["matched"]) for row, _ in items]
 
         assert base_rows is not None
         rows = []

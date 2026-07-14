@@ -5,8 +5,10 @@ Speaking score:
   Movement_t = SD(m_{t-w+1}, ..., m_t)   # ~2.4 s window at 5 fps
 
 Default keep rule (within each candidate / debate video):
-  τ* = Otsu threshold on Movement (successful frames)
-  keep where Movement_t > otsu_factor * τ*
+  τ_mov* = Otsu threshold on Movement (successful frames)
+  keep where Movement_t > otsu_factor * τ_mov*
+  Optional dual gate (--m-otsu-factor): also require
+    m_t > m_otsu_factor * Otsu(m)
 
 Pair mode (filter_candidate_pair): exclusive winner-take-all on shared
 Dataset source frames using Movement−τ*, then turn consolidation.
@@ -114,6 +116,7 @@ def speaking_mask(
     min_z: float = DEFAULT_MIN_Z,
     min_movement: float | None = None,
     otsu_factor: float = DEFAULT_OTSU_FACTOR,
+    m_otsu_factor: float | None = None,
     ref_mask: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, float]:
     """
@@ -123,6 +126,8 @@ def speaking_mask(
       - otsu: Movement > otsu_factor * Otsu(τ*) within this video
       - z:    z(Movement) > min_z within this video
       - absolute: Movement > min_movement
+
+    If m_otsu_factor is set (any mode), also require m > m_otsu_factor * Otsu(m).
     """
     m = compute_m(df)
     movement = compute_movement(m, window_frames=window_frames)
@@ -145,6 +150,12 @@ def speaking_mask(
         threshold_used = float(min_movement)
     else:
         raise ValueError(f"Unknown mode: {mode!r} (use otsu, z, or absolute)")
+
+    if m_otsu_factor is not None:
+        if not (m_otsu_factor > 0):
+            raise ValueError(f"m_otsu_factor must be > 0, got {m_otsu_factor}")
+        tau_m = otsu_threshold(m, ref_mask=ref_mask)
+        keep = keep & (m.fillna(0.0) > float(tau_m * m_otsu_factor))
 
     return keep, m, movement, movement_z, threshold_used
 
@@ -424,6 +435,7 @@ def filter_candidate_pair(
     csv_a: Path | None = None,
     csv_b: Path | None = None,
     otsu_factor: float = DEFAULT_OTSU_FACTOR,
+    m_otsu_factor: float | None = None,
     window_frames: int = DEFAULT_WINDOW_FRAMES,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_turn_frames: int = DEFAULT_MIN_TURN_FRAMES,
@@ -453,11 +465,11 @@ def filter_candidate_pair(
 
     keep_a, _m_a, mov_a, _z_a, tau_a = speaking_mask(
         df_a, window_frames=window_frames, mode="otsu",
-        otsu_factor=otsu_factor, ref_mask=success_a,
+        otsu_factor=otsu_factor, m_otsu_factor=m_otsu_factor, ref_mask=success_a,
     )
     keep_b, _m_b, mov_b, _z_b, tau_b = speaking_mask(
         df_b, window_frames=window_frames, mode="otsu",
-        otsu_factor=otsu_factor, ref_mask=success_b,
+        otsu_factor=otsu_factor, m_otsu_factor=m_otsu_factor, ref_mask=success_b,
     )
     raw_a = keep_a.fillna(False).to_numpy(dtype=bool).copy()
     raw_b = keep_b.fillna(False).to_numpy(dtype=bool).copy()
@@ -482,9 +494,10 @@ def filter_candidate_pair(
         raw_a, mov_a_np, float(tau_a), src_a,
         raw_b, mov_b_np, float(tau_b), src_b,
     )
+    m_tag = f" AND m×{m_otsu_factor:g}" if m_otsu_factor is not None else ""
     print(
         f"  exclusive raw: resolved {dual_before} dual source frames "
-        f"(τ* A={tau_a:.4f} B={tau_b:.4f}, factor={otsu_factor:g})",
+        f"(τ* A={tau_a:.4f} B={tau_b:.4f}, mov×{otsu_factor:g}{m_tag})",
         flush=True,
     )
 
@@ -503,11 +516,11 @@ def filter_candidate_pair(
 
     write_speaking_videos(
         video_a, keep_a_f, write_deleted=write_deleted,
-        label=f"pair exclusive Otsu×{otsu_factor:g}",
+        label=f"pair exclusive mov×{otsu_factor:g}{m_tag}",
     )
     write_speaking_videos(
         video_b, keep_b_f, write_deleted=write_deleted,
-        label=f"pair exclusive Otsu×{otsu_factor:g}",
+        label=f"pair exclusive mov×{otsu_factor:g}{m_tag}",
     )
 
 
@@ -525,6 +538,7 @@ def filter_video(
     min_z: float = DEFAULT_MIN_Z,
     min_movement: float | None = None,
     otsu_factor: float = DEFAULT_OTSU_FACTOR,
+    m_otsu_factor: float | None = None,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_turn_frames: int = DEFAULT_MIN_TURN_FRAMES,
     use_turns: bool = True,
@@ -580,6 +594,7 @@ def filter_video(
         min_z=min_z,
         min_movement=min_movement,
         otsu_factor=otsu_factor,
+        m_otsu_factor=m_otsu_factor,
         ref_mask=success_mask,
     )
     if success_mask is not None:
@@ -639,11 +654,13 @@ def filter_video(
 
     window_sec = window_frames / float(fps)
     if mode == "otsu":
-        rule = f"Otsu τ*×{otsu_factor:g}={threshold_used:.3f}"
+        rule = f"mov×{otsu_factor:g} τ*={threshold_used:.3f}"
     elif mode == "z":
         rule = f"z(Movement)>{threshold_used:g}"
     else:
         rule = f"Movement>{threshold_used:g}"
+    if m_otsu_factor is not None:
+        rule += f" AND m×{m_otsu_factor:g}"
     msg = (
         f"{video_path.name}: kept {kept}/{n_video} "
         f"({100 * kept / max(n_video, 1):.1f}%, {rule}, "
@@ -712,6 +729,15 @@ def parse_args() -> argparse.Namespace:
         help=f"For --mode otsu: keep when Movement > factor * τ* (default: {DEFAULT_OTSU_FACTOR}).",
     )
     parser.add_argument(
+        "--m-otsu-factor",
+        type=float,
+        default=None,
+        help=(
+            "Optional dual gate: also require m > factor * Otsu(m). "
+            "Unset = movement-only (legacy)."
+        ),
+    )
+    parser.add_argument(
         "--max-gap-frames",
         type=int,
         default=DEFAULT_MAX_GAP_FRAMES,
@@ -759,6 +785,7 @@ def main() -> None:
             min_z=args.min_z,
             min_movement=args.min_movement,
             otsu_factor=args.otsu_factor,
+            m_otsu_factor=args.m_otsu_factor,
             max_gap_frames=args.max_gap_frames,
             min_turn_frames=args.min_turn_frames,
             use_turns=not args.no_turns,
