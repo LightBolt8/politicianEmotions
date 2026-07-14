@@ -37,10 +37,45 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 def load_reference_embedding(app: FaceAnalysis, image_path: Path) -> np.ndarray:
     """Load an image and return its 512-dimensional ArcFace embedding."""
-    image = cv2.imread(str(image_path))
+    image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError(f"Could not read image: {image_path}")
+    # Flatten RGBA / gray refs to BGR so detectors see a normal 3-channel image.
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 4:
+        bgr = image[:, :, :3].astype(np.float32)
+        alpha = image[:, :, 3:4].astype(np.float32) / 255.0
+        image = (bgr * alpha + 255.0 * (1.0 - alpha)).astype(np.uint8)
+
     faces = app.get(image)
+    if not faces:
+        # Tight head crops often miss at det_size=640; pad + retry smaller detectors.
+        pad = max(32, min(image.shape[:2]) // 4)
+        padded = cv2.copyMakeBorder(
+            image, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=(255, 255, 255)
+        )
+        faces = app.get(padded)
+    if not faces:
+        for det_size in ((320, 320), (160, 160)):
+            app.prepare(ctx_id=-1, det_size=det_size)
+            faces = app.get(image)
+            if not faces:
+                faces = app.get(
+                    cv2.copyMakeBorder(
+                        image,
+                        64,
+                        64,
+                        64,
+                        64,
+                        cv2.BORDER_CONSTANT,
+                        value=(255, 255, 255),
+                    )
+                )
+            if faces:
+                break
+        # Restore default detector size for the main video pass.
+        app.prepare(ctx_id=-1, det_size=(640, 640))
     if not faces:
         raise ValueError(f"No face found in reference image: {image_path}")
     return max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])).embedding

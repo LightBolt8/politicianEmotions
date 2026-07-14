@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2008.mp4",
+  "output_a": "/Users/bryanhan/politicianEmotions/Exported/time_windows/work/2008/70-72min/Obama.mp4",
+  "output_b": "/Users/bryanhan/politicianEmotions/Exported/time_windows/work/2008/70-72min/McCain.mp4",
+  "deleted": "/Users/bryanhan/politicianEmotions/Exported/time_windows/work/2008/deleted_faces.mp4",
+  "last_frame": 129471,
+  "written_a": 426,
+  "written_b": 0,
+  "written_deleted": 359,
+  "part_index": 0,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}
