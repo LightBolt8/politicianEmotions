@@ -1,0 +1,13 @@
+{
+  "dataset": "/Users/bryanhan/politicianEmotions/Dataset/2012.mp4",
+  "start_seconds": 0.0,
+  "skip_rate": 6,
+  "threshold": 0.6,
+  "max_yaw": 30.0,
+  "ref_a": "/Users/bryanhan/politicianEmotions/refs/2012/candidate_A.jpg",
+  "ref_b": "/Users/bryanhan/politicianEmotions/refs/2012/candidate_B.jpg",
+  "count_a": 22775,
+  "count_b": 22352,
+  "expected_a": 22737,
+  "expected_b": 22321
+}
