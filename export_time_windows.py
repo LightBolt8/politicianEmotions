@@ -81,30 +81,6 @@ YEARS = (
         ROOT / "refs/2020/candidate_A.jpg",
         ROOT / "refs/2020/candidate_B.jpg",
     ),
-    (
-        "2024b",
-        "2024b",
-        ("Trump", "Biden"),
-        11.0,
-        (
-            ROOT / "Exported/2024b/Trump_clean_2024b/Trump_clean_2024b.csv",
-            ROOT / "Exported/2024b/Biden_clean_2024b/Biden_clean_2024b.csv",
-        ),
-        ROOT / "refs/2024b/candidate_A.jpg",
-        ROOT / "refs/2024b/candidate_B.jpg",
-    ),
-    (
-        "2024k",
-        "2024k",
-        ("Trump", "Harris"),
-        0.0,
-        (
-            ROOT / "Exported/2024k/Trump_clean_2024/Trump_clean_2024.csv",
-            ROOT / "Exported/2024k/Harris_clean_2024/Harris_clean_2024.csv",
-        ),
-        ROOT / "refs/2024k/candidate_A.jpg",
-        ROOT / "refs/2024k/candidate_B.jpg",
-    ),
 )
 
 
