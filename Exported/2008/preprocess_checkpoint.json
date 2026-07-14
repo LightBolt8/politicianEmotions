@@ -1,7 +1,7 @@
 {
   "input_video": "Dataset/2008.mp4",
-  "output_a": "Exported/2008/candidate_A_clean/candidate_A_clean.mp4",
-  "output_b": "Exported/2008/candidate_B_clean/candidate_B_clean.mp4",
+  "output_a": "Exported/2008/Obama_clean_2008/Obama_clean_2008.mp4",
+  "output_b": "Exported/2008/McCain_clean_2008/McCain_clean_2008.mp4",
   "deleted": "Exported/2008/deleted_faces.mp4",
   "last_frame": 175806,
   "written_a": 12809,
