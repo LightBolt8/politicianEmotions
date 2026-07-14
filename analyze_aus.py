@@ -24,19 +24,35 @@ DEFAULT_DATA_DIR = Path("Exported")
 
 
 def openface_csv_for_video(video_path: Path) -> Path:
-    """OpenFace CSV lives alongside the source video."""
-    return video_path.parent / f"{video_path.stem}.csv"
+    """OpenFace CSV lives alongside the source video; prefer speaking CSV after 2008."""
+    base = video_path.parent / f"{video_path.stem}.csv"
+    speaking = video_path.parent / f"{video_path.stem}_speaking.csv"
+    # Year suffix like 2016, 2024, 2024b, 2024k
+    year_match = re.search(r"_clean_(\d+)", video_path.stem)
+    year = int(year_match.group(1)) if year_match else 0
+    if year > 2008 and speaking.is_file():
+        return speaking
+    return base
 
 
 def parse_video_name(video_path: Path) -> tuple[str, str]:
-    if "_clean_" not in video_path.stem:
+    stem = video_path.stem.removesuffix("_speaking")
+    if "_clean_" not in stem:
         raise ValueError(f"Expected Name_clean_YEAR.mp4, got: {video_path.name}")
-    candidate, year = video_path.stem.rsplit("_clean_", 1)
+    candidate, year = stem.rsplit("_clean_", 1)
     return candidate, year
 
 
 def discover_exports(data_dir: Path) -> list[Path]:
-    return sorted(data_dir.rglob("*_clean_*.mp4"))
+    return sorted(
+        path
+        for path in data_dir.rglob("*_clean_*.mp4")
+        if path.parent.name == path.stem
+        and "speaking" not in path.name
+        and "firstRun" not in path.parts
+        and "candidate_A_clean" not in path.parts
+        and "candidate_B_clean" not in path.parts
+    )
 
 
 def run_openface_if_needed(
@@ -269,7 +285,7 @@ def main() -> None:
                 print(f"  {msg}")
         from plot_au_comparison import run_comparison
 
-        run_comparison(data_dir, data_dir / "comparison")
+        run_comparison(data_dir, data_dir / "comparison", include_all=True)
         return
 
     if not args.source:

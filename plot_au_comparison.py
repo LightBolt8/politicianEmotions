@@ -25,12 +25,12 @@ EXTRA_LABELS = {
     "AU26": "Jaw drop",
 }
 
-# Default comparison: 2016 + 2024 debates under Exported/<year>/.
+# Default comparison paths (prefer speaking CSVs after 2008).
 DEFAULT_CANDIDATES: list[tuple[str, str]] = [
-    ("Trump 2016", "2016/Trump_clean_2016/Trump_clean_2016.csv"),
-    ("Clinton 2016", "2016/Clinton_clean_2016/Clinton_clean_2016.csv"),
-    ("Trump 2024", "2024k/Trump_clean_2024/Trump_clean_2024.csv"),
-    ("Harris 2024", "2024k/Harris_clean_2024/Harris_clean_2024.csv"),
+    ("Trump 2016", "2016/Trump_clean_2016/Trump_clean_2016_speaking.csv"),
+    ("Clinton 2016", "2016/Clinton_clean_2016/Clinton_clean_2016_speaking.csv"),
+    ("Trump 2024", "2024k/Trump_clean_2024/Trump_clean_2024_speaking.csv"),
+    ("Harris 2024", "2024k/Harris_clean_2024/Harris_clean_2024_speaking.csv"),
 ]
 
 PALETTE = {
@@ -48,14 +48,28 @@ def csv_path_for(data_root: Path, relative: str) -> Path:
 
 
 def discover_all_candidates(data_root: Path) -> list[tuple[str, Path]]:
+    """Prefer speaking CSVs for debates after 2008; use full CSVs for 2008 and earlier."""
     found: list[tuple[str, Path, tuple[int, str]]] = []
     for csv_path in sorted(data_root.rglob("*_clean_*.csv")):
         stem = csv_path.stem
-        if "_clean_" not in stem or csv_path.parent.name != stem:
+        speaking = stem.endswith("_speaking")
+        base_stem = stem[: -len("_speaking")] if speaking else stem
+        if "_clean_" not in base_stem:
             continue
-        candidate, year = stem.rsplit("_clean_", 1)
+        # Require CSV to live in the candidate folder named after the non-speaking stem.
+        if csv_path.parent.name != base_stem:
+            continue
+        candidate, year = base_stem.rsplit("_clean_", 1)
+        year_key = int(re.match(r"(\d+)", year).group(1)) if re.match(r"(\d+)", year) else 0
+        # No AU25 speaking filter for 2008 and earlier.
+        if year_key <= 2008 and speaking:
+            continue
+        if year_key > 2008 and not speaking:
+            speaking_csv = csv_path.with_name(f"{base_stem}_speaking.csv")
+            if speaking_csv.is_file():
+                continue
         label = f"{candidate} {year}"
-        found.append((label, csv_path, (int(year), candidate)))
+        found.append((label, csv_path, (year_key, candidate)))
 
     best: dict[str, tuple[Path, tuple[int, str]]] = {}
     for label, path, sort_key in found:
@@ -169,11 +183,15 @@ def plot_violins(
     candidate_order: list[str],
     output_path: Path,
 ) -> None:
-    palette = {name: PALETTE[name] for name in candidate_order if name in PALETTE}
+    colors = sns.color_palette("husl", n_colors=len(candidate_order))
+    palette = {
+        name: PALETTE.get(name, colors[i])
+        for i, name in enumerate(candidate_order)
+    }
 
-    ncols = 4
+    ncols = min(3, len(aus))
     nrows = int(np.ceil(len(aus) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 3.6 * nrows), constrained_layout=True)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.8 * nrows), constrained_layout=True)
     axes_flat = np.atleast_1d(axes).flatten()
 
     for ax, au in zip(axes_flat, aus):
@@ -239,10 +257,13 @@ def run_comparison(
         print(f"Loaded {label}: {path.name} ({len(frame_data[label])} frames)")
 
     mean_matrix = build_mean_matrix(frame_data)
-    plot_heatmap(mean_matrix, output_dir / "au_heatmap.png")
-    mean_matrix.to_csv(output_dir / "au_heatmap_data.csv")
+    # Heatmap focuses on aggression-related AUs (AU4/5/7).
+    anger_cols = [au for au in ANGER_AUS if au in mean_matrix.columns]
+    anger_matrix = mean_matrix[anger_cols]
+    plot_heatmap(anger_matrix, output_dir / "au_heatmap.png")
+    anger_matrix.to_csv(output_dir / "au_heatmap_data.csv")
 
-    violin_aus = ANGER_AUS + EXTRA_AUS
+    violin_aus = ANGER_AUS
     long_df = build_violin_long_frame(frame_data, violin_aus)
     candidate_order = [label for label, _ in candidates]
     plot_violins(long_df, violin_aus, candidate_order, output_dir / "au_violins.png")
