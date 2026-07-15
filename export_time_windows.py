@@ -80,10 +80,11 @@ YEARS = (
     (
         "2008",
         "2008",
-        ("McCain", "Obama"),
+        # Names must match ref order: A=Obama, B=McCain (see preprocess checkpoint).
+        ("Obama", "McCain"),
         (
-            DATA / "2008/McCain_clean_2008/McCain_clean_2008.csv",
             DATA / "2008/Obama_clean_2008/Obama_clean_2008.csv",
+            DATA / "2008/McCain_clean_2008/McCain_clean_2008.csv",
         ),
         ROOT / "refs/2008/candidate_A.jpg",
         ROOT / "refs/2008/candidate_B.jpg",
