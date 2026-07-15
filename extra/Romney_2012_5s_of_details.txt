@@ -1,0 +1,4 @@
+Input:/Users/bryanhan/politicianEmotions/newExported/comparison/openface_tracked_clips/Romney_2012_5s.mp4
+Input full path:/Users/bryanhan/politicianEmotions/newExported/comparison/openface_tracked_clips/Romney_2012_5s.mp4
+Camera parameters:233.333,233.333,128,128
+Output video:Romney_2012_5s.avi
