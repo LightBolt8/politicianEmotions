@@ -6,13 +6,12 @@ For each sampled Dataset frame:
   2. ArcFace match → matched 0/1
   3. Face crop → per-window per-candidate clip → OpenFace
      (windows are not concatenated — Movement / turns cannot leak across
-     10–11 / 40–41 / 70–71).
-  4. Speaking = Movement > τ* (τ* from full clean CSV, same Otsu×factor
-     as the main pipeline; no new Otsu on shorts), then consolidate_turns.
-     Same per-candidate rules as filter_speaking — no cross-candidate
-     winner-take-all.
+     15–16 / 45–46 / 75–76).
+  4. Speaking = Movement > τ_mov AND m > τ_m (thresholds from full clean
+     CSV; dual-gate Otsu×factors; no new Otsu on shorts), then
+     consolidate_turns. Same per-candidate rules as filter_speaking.
 
-Output: Exported/time_windows/{year}_new.csv — one row per sampled frame
+Output: newExported/time_windows/{year}_new.csv — one row per sampled frame
 with both candidates side-by-side ({Name}_matched, {Name}_speaking).
 Rows kept if at least one candidate matched.
 """
@@ -33,9 +32,10 @@ from insightface.app import FaceAnalysis
 from filter_speaking import (
     DEFAULT_MAX_GAP_FRAMES,
     DEFAULT_MIN_TURN_FRAMES,
-    DEFAULT_OTSU_FACTOR,
     DEFAULT_WINDOW_FRAMES,
+    compute_m,
     consolidate_turns,
+    otsu_threshold,
     speaking_mask,
 )
 from preprocessing_data import (
@@ -46,31 +46,55 @@ from preprocessing_data import (
 from run_openface import find_feature_extraction, run_openface_on_video
 
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT / "Exported" / "time_windows"
+OUT = ROOT / "newExported" / "time_windows"
 CLIPS = OUT / "clips"
 WORK = OUT / "work"
+DATA = ROOT / "newExported"
 
 SKIP = 6  # ~5 fps — same as preprocess; rolling SD window ≈ 2.4s
 THRESHOLD = 0.6
 MAX_YAW = 30.0
-OTSU_FACTOR = DEFAULT_OTSU_FACTOR  # 0.9 — match speaking videos
+OTSU_FACTOR = 0.75  # Movement Otsu factor (dual gate with M_OTSU_FACTOR)
+M_OTSU_FACTOR = 0.85  # m = AU25_r+AU26_r Otsu factor
 FRAME_SIZE = (256, 256)
 CROP_FPS = 5.0  # crop strip rate matches SKIP sampling on 30fps source
 
 WINDOWS = (
-    ("10-11min", 10 * 60.0, 11 * 60.0),
-    ("40-41min", 40 * 60.0, 41 * 60.0),
-    ("70-71min", 70 * 60.0, 71 * 60.0),
+    ("15-16min", 15 * 60.0, 16 * 60.0),
+    ("45-46min", 45 * 60.0, 46 * 60.0),
+    ("75-76min", 75 * 60.0, 76 * 60.0),
 )
 
 YEARS = (
+    (
+        "2004",
+        "2004",
+        ("Bush", "Kerry"),
+        (
+            DATA / "2004/Bush_clean_2004/Bush_clean_2004.csv",
+            DATA / "2004/Kerry_clean_2004/Kerry_clean_2004.csv",
+        ),
+        ROOT / "refs/2004/candidate_A.jpg",
+        ROOT / "refs/2004/candidate_B.jpg",
+    ),
+    (
+        "2008",
+        "2008",
+        ("McCain", "Obama"),
+        (
+            DATA / "2008/McCain_clean_2008/McCain_clean_2008.csv",
+            DATA / "2008/Obama_clean_2008/Obama_clean_2008.csv",
+        ),
+        ROOT / "refs/2008/candidate_A.jpg",
+        ROOT / "refs/2008/candidate_B.jpg",
+    ),
     (
         "2012",
         "2012",
         ("Obama", "Romney"),
         (
-            ROOT / "Exported/2012/Obama_clean_2012/Obama_clean_2012.csv",
-            ROOT / "Exported/2012/Romney_clean_2012/Romney_clean_2012.csv",
+            DATA / "2012/Obama_clean_2012/Obama_clean_2012.csv",
+            DATA / "2012/Romney_clean_2012/Romney_clean_2012.csv",
         ),
         ROOT / "refs/2012/candidate_A.jpg",
         ROOT / "refs/2012/candidate_B.jpg",
@@ -80,8 +104,8 @@ YEARS = (
         "2016",
         ("Trump", "Clinton"),
         (
-            ROOT / "Exported/2016/Trump_clean_2016/Trump_clean_2016.csv",
-            ROOT / "Exported/2016/Clinton_clean_2016/Clinton_clean_2016.csv",
+            DATA / "2016/Trump_clean_2016/Trump_clean_2016.csv",
+            DATA / "2016/Clinton_clean_2016/Clinton_clean_2016.csv",
         ),
         ROOT / "refs/2016/candidate_A.jpg",
         ROOT / "refs/2016/candidate_B.jpg",
@@ -91,8 +115,8 @@ YEARS = (
         "2020",
         ("Trump", "Biden"),
         (
-            ROOT / "Exported/2020/Trump_clean_2020/Trump_clean_2020.csv",
-            ROOT / "Exported/2020/Biden_clean_2020/Biden_clean_2020.csv",
+            DATA / "2020/Trump_clean_2020/Trump_clean_2020.csv",
+            DATA / "2020/Biden_clean_2020/Biden_clean_2020.csv",
         ),
         ROOT / "refs/2020/candidate_A.jpg",
         ROOT / "refs/2020/candidate_B.jpg",
@@ -102,8 +126,8 @@ YEARS = (
         "2024b",
         ("Trump", "Biden"),
         (
-            ROOT / "Exported/2024b/Trump_clean_2024b/Trump_clean_2024b.csv",
-            ROOT / "Exported/2024b/Biden_clean_2024b/Biden_clean_2024b.csv",
+            DATA / "2024b/Trump_clean_2024b/Trump_clean_2024b.csv",
+            DATA / "2024b/Biden_clean_2024b/Biden_clean_2024b.csv",
         ),
         ROOT / "refs/2024b/candidate_A.jpg",
         ROOT / "refs/2024b/candidate_B.jpg",
@@ -113,8 +137,8 @@ YEARS = (
         "2024k",
         ("Trump", "Harris"),
         (
-            ROOT / "Exported/2024k/Trump_clean_2024/Trump_clean_2024.csv",
-            ROOT / "Exported/2024k/Harris_clean_2024/Harris_clean_2024.csv",
+            DATA / "2024k/Trump_clean_2024/Trump_clean_2024.csv",
+            DATA / "2024k/Harris_clean_2024/Harris_clean_2024.csv",
         ),
         ROOT / "refs/2024k/candidate_A.jpg",
         ROOT / "refs/2024k/candidate_B.jpg",
@@ -193,17 +217,19 @@ def crop_face(frame: np.ndarray, bbox: np.ndarray) -> np.ndarray | None:
     return cv2.resize(cropped, FRAME_SIZE)
 
 
-def tau_from_full_clean(clean_csv: Path) -> float:
-    """Reuse full-debate Otsu×factor threshold; do not refit Otsu on short clips."""
+def taus_from_full_clean(clean_csv: Path) -> tuple[float, float]:
+    """Reuse full-debate dual-gate thresholds; do not refit Otsu on short clips."""
     df = pd.read_csv(clean_csv)
     df.columns = [c.strip() for c in df.columns]
     success = None
     if "success" in df.columns:
         success = pd.to_numeric(df["success"], errors="coerce").fillna(0) == 1
-    *_rest, threshold_used = speaking_mask(
+    *_rest, tau_mov = speaking_mask(
         df, otsu_factor=OTSU_FACTOR, ref_mask=success
     )
-    return float(threshold_used)
+    m = compute_m(df)
+    tau_m = float(otsu_threshold(m, ref_mask=success) * M_OTSU_FACTOR)
+    return float(tau_mov), tau_m
 
 
 def write_crop_video(crops: list[np.ndarray], path: Path) -> None:
@@ -224,18 +250,19 @@ def write_crop_video(crops: list[np.ndarray], path: Path) -> None:
 
 def speaking_on_crops(
     crops: list[np.ndarray],
-    tau: float,
+    tau_mov: float,
+    tau_m: float,
     work_dir: Path,
     *,
     openface_bin: Path,
     openface_cwd: Path | None,
     warmup_frames: int = DEFAULT_WINDOW_FRAMES,
 ) -> list[int]:
-    """OpenFace one window's crops; Movement > τ*, then turn consolidation.
+    """OpenFace one window's crops; Movement > τ_mov AND m > τ_m, then turns.
 
     Prepends warmup_frames copies of the first crop so the rolling Movement
     window is defined at clip t=0; pad flags are discarded. Call once per
-    window so Movement/turns never span 10–11 → 40–41 → 70–71.
+    window so Movement/turns never span 15–16 → 45–46 → 75–76.
     """
     if not crops:
         return []
@@ -253,13 +280,14 @@ def speaking_on_crops(
 
     df = pd.read_csv(csv_path)
     df.columns = [c.strip() for c in df.columns]
-    keep, _m, _movement, _mz, _thr = speaking_mask(
+    keep, m, _movement, _mz, _thr = speaking_mask(
         df,
         window_frames=DEFAULT_WINDOW_FRAMES,
         mode="absolute",
-        min_movement=tau,
+        min_movement=tau_mov,
         otsu_factor=OTSU_FACTOR,
     )
+    keep = keep & (m.fillna(0.0) > float(tau_m))
     keep, _turns = consolidate_turns(
         keep.fillna(False),
         max_gap_frames=DEFAULT_MAX_GAP_FRAMES,
@@ -316,11 +344,15 @@ def main() -> None:
 
         embeddings = build_known_embeddings(app, ref_a, ref_b)
         taus = {
-            name: tau_from_full_clean(clean)
+            name: taus_from_full_clean(clean)
             for name, clean in zip(names, cleans, strict=True)
         }
-        for name, tau in taus.items():
-            print(f"  {name}: reuse τ*×{OTSU_FACTOR:g} = {tau:.4f}", flush=True)
+        for name, (tau_mov, tau_m) in taus.items():
+            print(
+                f"  {name}: mov×{OTSU_FACTOR:g}={tau_mov:.4f} "
+                f"AND m×{M_OTSU_FACTOR:g}={tau_m:.4f}",
+                flush=True,
+            )
 
         # Per candidate: list of (row_dict_without_speaking, crop_or_None)
         pending: dict[str, list[tuple[dict, np.ndarray | None]]] = {
@@ -419,7 +451,7 @@ def main() -> None:
             total = sum(len(v) for v in by_window.values())
             print(
                 f"  {name}: {total} matched crops → OpenFace per window "
-                f"(τ*={taus[name]:.4f})",
+                f"(τ_mov={taus[name][0]:.4f}, τ_m={taus[name][1]:.4f})",
                 flush=True,
             )
             for window, crop_indices in by_window.items():
@@ -430,7 +462,8 @@ def main() -> None:
                 work.mkdir(parents=True, exist_ok=True)
                 flags = speaking_on_crops(
                     crops,
-                    taus[name],
+                    taus[name][0],
+                    taus[name][1],
                     work,
                     openface_bin=openface_bin,
                     openface_cwd=openface_cwd,
