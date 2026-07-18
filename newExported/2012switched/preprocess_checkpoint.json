@@ -1,0 +1,18 @@
+{
+  "input_video": "Dataset/2012switched.mp4",
+  "output_a": "Exported/2012switched/Obama_clean_2012switched/Obama_clean_2012switched.mp4",
+  "output_b": "Exported/2012switched/Romney_clean_2012switched/Romney_clean_2012switched.mp4",
+  "deleted": "Exported/2012switched/deleted_faces.mp4",
+  "last_frame": 165141,
+  "written_a": 12565,
+  "written_b": 10666,
+  "written_deleted": 8060,
+  "part_index": 18,
+  "fps": 5,
+  "frame_size": [
+    256,
+    256
+  ],
+  "skip_rate": 6,
+  "complete": true
+}
