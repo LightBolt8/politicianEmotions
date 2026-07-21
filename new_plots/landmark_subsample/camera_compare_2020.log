@@ -1,0 +1,40 @@
+Waiting for main landmark run to finish...
+Main run complete.
+
+=== Trump 2020 ===
+  subsample: 1000 frames → trump_2020_sub1000.mp4
+  OpenFace [Trump 2020 default_233] ...
+  done in 198.3s (exit 0)
+  [default_233] eye_span=70.759  Tz=277.73  expr=0.3624  cam=233.333,233.333,128,128
+  OpenFace [Trump 2020 fxfy256] ...
+  done in 193.1s (exit 0)
+  [fxfy256] eye_span=70.759  Tz=304.94  expr=0.3624  cam=256,256,128,128
+
+=== Biden 2020 ===
+  subsample: 1000 frames → biden_2020_sub1000.mp4
+  OpenFace [Biden 2020 default_233] ...
+  done in 184.9s (exit 0)
+  [default_233] eye_span=63.633  Tz=307.23  expr=0.5183  cam=233.333,233.333,128,128
+  OpenFace [Biden 2020 fxfy256] ...
+  done in 159.0s (exit 0)
+  [fxfy256] eye_span=63.633  Tz=337.34  expr=0.5183  cam=256,256,128,128
+
+Wrote /Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/camera_compare_2020/camera_compare_summary.csv
+
+=== Default vs 256,256,128,128 ===
+
+Trump 2020:
+  eye_span_px_mean: default=70.7594  fxfy256=70.7594  Δ=+0.0000
+  eye_span_px_median: default=70.8083  fxfy256=70.8083  Δ=+0.0000
+  pose_Tz_mean: default=277.7317  fxfy256=304.9419  Δ=+27.2101
+  eye_span_norm_mean: default=19650.6592  fxfy256=21576.0908  Δ=+1925.4315
+  expressivity_r_mean: default=0.3624  fxfy256=0.3624  Δ=+0.0000
+  aggression_4_mean: default=0.4890  fxfy256=0.4890  Δ=+0.0000
+
+Biden 2020:
+  eye_span_px_mean: default=63.6332  fxfy256=63.6332  Δ=+0.0000
+  eye_span_px_median: default=63.9281  fxfy256=63.9281  Δ=+0.0000
+  pose_Tz_mean: default=307.2323  fxfy256=337.3406  Δ=+30.1083
+  eye_span_norm_mean: default=19553.3098  fxfy256=21469.7205  Δ=+1916.4107
+  expressivity_r_mean: default=0.5183  fxfy256=0.5183  Δ=+0.0000
+  aggression_4_mean: default=0.6136  fxfy256=0.6136  Δ=+0.0000

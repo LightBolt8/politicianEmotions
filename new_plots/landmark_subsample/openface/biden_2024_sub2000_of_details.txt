@@ -1,0 +1,10 @@
+Input:/Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/videos/biden_2024_sub2000.mp4
+Input full path:/Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/videos/biden_2024_sub2000.mp4
+Camera parameters:233.333,233.333,128,128
+Output csv:biden_2024_sub2000.csv
+Gaze: 1
+AUs: 1
+Landmarks 2D: 1
+Landmarks 3D: 0
+Pose: 1
+Shape parameters: 0

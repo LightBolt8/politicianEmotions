@@ -1,0 +1,10 @@
+Input:/Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/videos/trump_2020_sub1000.mp4
+Input full path:/Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/videos/trump_2020_sub1000.mp4
+Camera parameters:256,256,128,128
+Output csv:trump_2020_sub1000.csv
+Gaze: 1
+AUs: 1
+Landmarks 2D: 1
+Landmarks 3D: 0
+Pose: 1
+Shape parameters: 0

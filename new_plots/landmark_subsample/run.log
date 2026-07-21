@@ -1,0 +1,80 @@
+
+=== Bush 2004 ===
+  subsample video: 2000 frames → bush_2004_sub2000.mp4
+  OpenFace bush_2004_sub2000.mp4: 435.2s
+  eye_span_px=67.35  expr=0.260
+
+=== Kerry 2004 ===
+  subsample video: 2000 frames → kerry_2004_sub2000.mp4
+  OpenFace kerry_2004_sub2000.mp4: 244.2s
+  eye_span_px=70.15  expr=0.301
+
+=== McCain 2008 ===
+  subsample video: 2000 frames → mccain_2008_sub2000.mp4
+  OpenFace mccain_2008_sub2000.mp4: 219.3s
+  eye_span_px=69.32  expr=0.287
+
+=== Obama 2008 ===
+  subsample video: 2000 frames → obama_2008_sub2000.mp4
+  OpenFace obama_2008_sub2000.mp4: 631.2s
+  eye_span_px=69.93  expr=0.233
+
+=== Romney 2012 ===
+  subsample video: 2000 frames → romney_2012_sub2000.mp4
+  OpenFace romney_2012_sub2000.mp4: 343.0s
+  eye_span_px=63.37  expr=0.346
+
+=== Obama 2012 ===
+  subsample video: 2000 frames → obama_2012_sub2000.mp4
+  OpenFace obama_2012_sub2000.mp4: 1915.0s
+  eye_span_px=69.10  expr=0.324
+
+=== Trump 2016 ===
+  subsample video: 2000 frames → trump_2016_sub2000.mp4
+  OpenFace trump_2016_sub2000.mp4: 343.2s
+  eye_span_px=71.80  expr=0.275
+
+=== Clinton 2016 ===
+  subsample video: 2000 frames → clinton_2016_sub2000.mp4
+  OpenFace clinton_2016_sub2000.mp4: 1225.2s
+  eye_span_px=73.94  expr=0.344
+
+=== Trump 2020 ===
+  subsample video: 2000 frames → trump_2020_sub2000.mp4
+  OpenFace trump_2020_sub2000.mp4: 357.0s
+  eye_span_px=70.73  expr=0.358
+
+=== Biden 2020 ===
+  subsample video: 2000 frames → biden_2020_sub2000.mp4
+  OpenFace biden_2020_sub2000.mp4: 260.9s
+  eye_span_px=63.68  expr=0.526
+
+=== Trump 2024 (1st) ===
+  subsample video: 2000 frames → trump_2024_1st_sub2000.mp4
+  OpenFace trump_2024_1st_sub2000.mp4: 286.9s
+  eye_span_px=69.04  expr=0.397
+
+=== Biden 2024 ===
+  subsample video: 2000 frames → biden_2024_sub2000.mp4
+  OpenFace biden_2024_sub2000.mp4: 264.5s
+  eye_span_px=63.13  expr=0.542
+
+=== Trump 2024 (2nd) ===
+  subsample video: 2000 frames → trump_2024_2nd_sub2000.mp4
+  OpenFace trump_2024_2nd_sub2000.mp4: 288.9s
+  eye_span_px=73.40  expr=0.437
+
+=== Harris 2024 ===
+  subsample video: 2000 frames → harris_2024_sub2000.mp4
+  OpenFace harris_2024_sub2000.mp4: 1082.6s
+  eye_span_px=67.12  expr=0.447
+
+Wrote /Users/bryanhan/politicianEmotions/new_plots/landmark_subsample/eye_span_36_45_summary.csv
+
+=== Spearman correlations (candidate-level) ===
+  eye_span_px_mean × year: ρ=-0.125, p=0.6699
+  eye_span_px_mean × expressivity: ρ=-0.402, p=0.1540
+  eye_span_norm_mean × year: ρ=-0.067, p=0.8199
+  eye_span_norm_mean × expressivity: ρ=-0.292, p=0.3105
+
+Total wall time: 132.2 min
